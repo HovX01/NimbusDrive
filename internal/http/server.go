@@ -1,0 +1,721 @@
+package httpserver
+
+import (
+	"bytes"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/vrc/nimbus/internal/app"
+	"github.com/vrc/nimbus/internal/domain"
+)
+
+type Server struct {
+	svc              *app.Services
+	corsOrigins      []string
+	accessSecret     string
+	requireAccessKey bool
+}
+
+func New(svc *app.Services, corsOrigins []string, accessSecret string, public bool) *Server {
+	return &Server{
+		svc:              svc,
+		corsOrigins:      corsOrigins,
+		accessSecret:     accessSecret,
+		requireAccessKey: !public,
+	}
+}
+
+func (s *Server) Router() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(2 * time.Hour))
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   s.corsOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Range", "X-Nimbus-Access"},
+		ExposedHeaders:   []string{"Accept-Ranges", "Content-Range", "Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "nimbus"})
+	})
+	r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"service": "nimbus",
+			"ui":      "http://localhost:5173",
+			"health":  "/health",
+			"api":     "/api/v1",
+		})
+	})
+
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/share/{token}", s.shareInfo)
+		r.Get("/share/{token}/download", s.shareDownload)
+		r.Get("/setup/status", s.setupStatus)
+
+		r.Group(func(r chi.Router) {
+			r.Use(s.accessRequired)
+			r.Post("/setup/telegram", s.setupTelegram)
+			r.Post("/auth/send-code", s.sendCode)
+			r.Post("/auth/sign-in", s.signIn)
+			r.Post("/auth/resume", s.resume)
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.authRequired)
+				r.Get("/auth/me", s.me)
+				r.Get("/auth/avatar", s.avatar)
+				r.Post("/auth/logout", s.logout)
+				r.Get("/contacts", s.listContacts)
+				r.Get("/contacts/{id}/avatar", s.contactAvatar)
+				r.Get("/files", s.listFiles)
+				r.Get("/search", s.search)
+				r.Post("/folders", s.mkdir)
+				r.Post("/files/upload", s.upload)
+				r.Post("/files/fetch", s.fetchURL)
+				r.Get("/files/fetch/{jobID}", s.fetchJobStatus)
+				r.Get("/files/{id}/download", s.download)
+				r.Post("/files/{id}/send-telegram", s.sendTelegram)
+				r.Get("/files/{id}/thumb", s.thumb)
+				r.Patch("/files/{id}", s.rename)
+				r.Post("/files/{id}/move", s.moveFile)
+				r.Post("/files/move", s.moveFiles)
+				r.Delete("/files/{id}", s.delete)
+				r.Get("/trash", s.listTrash)
+				r.Delete("/trash", s.emptyTrash)
+				r.Delete("/trash/{id}", s.purgeTrash)
+				r.Post("/files/{id}/share", s.createShare)
+				r.Get("/files/{id}/shares", s.listShares)
+				r.Delete("/shares/{shareID}", s.revokeShare)
+			})
+		})
+	})
+
+	return r
+}
+
+func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
+	configured, authorized, err := s.svc.SetupStatus(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured":          configured,
+		"authorized":          authorized,
+		"access_key_required": s.requireAccessKey,
+	})
+}
+
+func (s *Server) setupTelegram(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		APIID   int    `json:"api_id"`
+		APIHash string `json:"api_hash"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	if err := s.svc.ConfigureTelegram(r.Context(), body.APIID, body.APIHash); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) sendCode(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Phone string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	hash, err := s.svc.SendCode(r.Context(), body.Phone)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"phone_code_hash": hash})
+}
+
+func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Phone         string `json:"phone"`
+		Code          string `json:"code"`
+		PhoneCodeHash string `json:"phone_code_hash"`
+		Password      string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	profile, token, err := s.svc.SignIn(r.Context(), body.Phone, body.Code, body.PhoneCodeHash, body.Password)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": profile})
+}
+
+func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
+	profile, token, err := s.svc.ResumeSession(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": profile})
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	profile, err := s.svc.Me(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) avatar(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	if err := s.svc.Avatar(r.Context(), &buf); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	_, _ = w.Write(buf.Bytes())
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.Logout(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
+	parent := r.URL.Query().Get("parent_id")
+	nodes, err := s.svc.List(r.Context(), parent)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if nodes == nil {
+		nodes = []domain.Node{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": nodes})
+}
+
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	hits, err := s.svc.Search(r.Context(), q, 50)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if hits == nil {
+		hits = []domain.SearchHit{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": hits})
+}
+
+func (s *Server) mkdir(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ParentID string `json:"parent_id"`
+		Name     string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	node, err := s.svc.Mkdir(r.Context(), body.ParentID, body.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, node)
+}
+
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	// Stream multipart; spill to disk above 32MiB so huge files are not held in RAM.
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeErr(w, fmt.Errorf("%w: invalid multipart upload", domain.ErrValidation))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	defer file.Close()
+	parent := r.FormValue("parent_id")
+	contentType := header.Header.Get("Content-Type")
+	node, err := s.svc.Upload(r.Context(), parent, header.Filename, contentType, file, header.Size)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, node)
+}
+
+func (s *Server) fetchURL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL       string `json:"url"`
+		ParentID  string `json:"parent_id"`
+		Mode      string `json:"mode"`
+		MaxHeight int    `json:"max_height"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	jobID, err := s.svc.StartFetchURL(body.ParentID, body.URL, body.Mode, body.MaxHeight)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+}
+
+func (s *Server) fetchJobStatus(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "jobID")
+	st, err := s.svc.GetFetchJob(jobID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	node, err := s.svc.Rename(r.Context(), id, body.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) moveFile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		ParentID string `json:"parent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	node, err := s.svc.Move(r.Context(), id, body.ParentID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) moveFiles(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs      []string `json:"ids"`
+		ParentID string   `json:"parent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	if len(body.IDs) == 0 {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	if err := s.svc.MoveMany(r.Context(), body.IDs, body.ParentID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) download(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	meta, err := s.svc.GetNode(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if meta.Type != domain.NodeFile || meta.Status != domain.StatusReady {
+		writeErr(w, domain.ErrNotFound)
+		return
+	}
+
+	ctype := downloadContentType(meta.MimeType, meta.Name)
+	name := domain.SanitizeDownloadName(meta.Name)
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Disposition", "inline; filename=\""+name+"\"")
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	start, end, ok, err := parseByteRange(r.Header.Get("Range"), meta.Size)
+	if err != nil {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", meta.Size))
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	if !ok {
+		w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
+		if _, err := s.svc.Download(r.Context(), id, w); err != nil {
+			return
+		}
+		return
+	}
+
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, meta.Size))
+	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	w.WriteHeader(http.StatusPartialContent)
+	if _, err := s.svc.DownloadRange(r.Context(), id, w, start, end); err != nil {
+		return
+	}
+}
+
+func (s *Server) thumb(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	b, err := s.svc.ThumbBytes(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	_, _ = w.Write(b)
+}
+
+// parseByteRange handles a single "bytes=start-end" request.
+// ok=false means no Range header (send full body).
+func parseByteRange(header string, size int64) (start, end int64, ok bool, err error) {
+	if header == "" || size <= 0 {
+		return 0, 0, false, nil
+	}
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, 0, false, domain.ErrValidation
+	}
+	spec := strings.TrimPrefix(header, "bytes=")
+	if strings.Contains(spec, ",") {
+		// Multi-range not supported.
+		return 0, 0, false, domain.ErrValidation
+	}
+	parts := strings.SplitN(spec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false, domain.ErrValidation
+	}
+
+	if parts[0] == "" {
+		// bytes=-suffix
+		suffix, convErr := strconv.ParseInt(parts[1], 10, 64)
+		if convErr != nil || suffix <= 0 {
+			return 0, 0, false, domain.ErrValidation
+		}
+		if suffix > size {
+			suffix = size
+		}
+		return size - suffix, size - 1, true, nil
+	}
+
+	start, convErr := strconv.ParseInt(parts[0], 10, 64)
+	if convErr != nil || start < 0 {
+		return 0, 0, false, domain.ErrValidation
+	}
+	if parts[1] == "" {
+		end = size - 1
+	} else {
+		end, convErr = strconv.ParseInt(parts[1], 10, 64)
+		if convErr != nil {
+			return 0, 0, false, domain.ErrValidation
+		}
+	}
+	if end >= size {
+		end = size - 1
+	}
+	if start > end {
+		return 0, 0, false, domain.ErrValidation
+	}
+	return start, end, true, nil
+}
+
+func downloadContentType(mimeType, name string) string {
+	if mimeType != "" && mimeType != "application/octet-stream" {
+		return mimeType
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".pdf":
+		return "application/pdf"
+	default:
+		if mimeType != "" {
+			return mimeType
+		}
+		return "application/octet-stream"
+	}
+}
+
+func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "trashed"})
+}
+
+func (s *Server) listContacts(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListContacts(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) contactAvatar(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "invalid contact id"}})
+		return
+	}
+	var buf bytes.Buffer
+	if err := s.svc.ContactAvatar(r.Context(), id, &buf); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	_, _ = w.Write(buf.Bytes())
+}
+
+func (s *Server) sendTelegram(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "invalid json"}})
+		return
+	}
+	if err := s.svc.SendToTelegram(r.Context(), chi.URLParam(r, "id"), body.UserID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListTrash(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) purgeTrash(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.Purge(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "purged"})
+}
+
+func (s *Server) emptyTrash(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.EmptyTrash(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
+	info, err := s.svc.CreateShare(r.Context(), chi.URLParam(r, "id"), publicBase(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, info)
+}
+
+func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListShares(r.Context(), chi.URLParam(r, "id"), publicBase(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.RevokeShare(r.Context(), chi.URLParam(r, "shareID")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (s *Server) shareInfo(w http.ResponseWriter, r *http.Request) {
+	node, link, err := s.svc.GetSharedFile(r.Context(), chi.URLParam(r, "token"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":      node.Name,
+		"mime_type": node.MimeType,
+		"size":      node.Size,
+		"shared_at": link.CreatedAt,
+	})
+}
+
+func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	node, link, err := s.svc.GetSharedFile(r.Context(), token)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	ctype := downloadContentType(node.MimeType, node.Name)
+	name := domain.SanitizeDownloadName(node.Name)
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Length", strconv.FormatInt(node.Size, 10))
+	if _, err := s.svc.Download(r.Context(), node.ID, w); err != nil {
+		return
+	}
+	_ = s.svc.IncrementShareDownload(r.Context(), link.ID)
+}
+
+func publicBase(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	host := r.Host
+	if host == "" {
+		host = "localhost:9090"
+	}
+	return scheme + "://" + host
+}
+
+func (s *Server) accessRequired(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAccessKey {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := strings.TrimSpace(r.Header.Get("X-Nimbus-Access"))
+		if got == "" {
+			got = strings.TrimSpace(r.URL.Query().Get("access"))
+		}
+		if !secureEqual(s.accessSecret, got) {
+			writeErr(w, fmt.Errorf("%w: missing or invalid access key (X-Nimbus-Access)", domain.ErrUnauthorized))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) authRequired(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := r.Header.Get("Authorization")
+		if !strings.HasPrefix(h, "Bearer ") {
+			writeErr(w, domain.ErrUnauthorized)
+			return
+		}
+		if _, err := s.svc.ParseToken(strings.TrimPrefix(h, "Bearer ")); err != nil {
+			writeErr(w, domain.ErrUnauthorized)
+			return
+		}
+		ok, err := s.svc.Authorized(r.Context())
+		if err != nil || !ok {
+			writeErr(w, domain.ErrUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func secureEqual(want, got string) bool {
+	if want == "" || got == "" {
+		return false
+	}
+	a := []byte(want)
+	b := []byte(got)
+	if len(a) != len(b) {
+		// Compare against itself so timing still depends on length of want.
+		_ = subtle.ConstantTimeCompare(a, a)
+		return false
+	}
+	return subtle.ConstantTimeCompare(a, b) == 1
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	code := "internal_error"
+	switch {
+	case errors.Is(err, domain.ErrValidation):
+		status, code = http.StatusBadRequest, "validation_error"
+	case errors.Is(err, domain.ErrNotConfigured):
+		status, code = http.StatusPreconditionRequired, "not_configured"
+	case errors.Is(err, domain.ErrUnauthorized), errors.Is(err, domain.ErrNotAuthenticated):
+		status, code = http.StatusUnauthorized, "unauthorized"
+	case errors.Is(err, domain.ErrNotFound):
+		status, code = http.StatusNotFound, "not_found"
+	case errors.Is(err, domain.ErrConflict):
+		status, code = http.StatusConflict, "conflict"
+	case errors.Is(err, domain.ErrTwoFARequired):
+		status, code = http.StatusUnauthorized, "two_fa_required"
+	}
+	writeJSON(w, status, map[string]any{
+		"error": map[string]string{"code": code, "message": err.Error()},
+	})
+}

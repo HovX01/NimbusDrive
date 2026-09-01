@@ -1,0 +1,34 @@
+# deps / vendor clones
+_vendor/
+node_modules/
+web/dist/
+web/node_modules/
+
+# build
+bin/
+dist/
+*.exe
+*.test
+/nimbus
+
+# data / secrets
+data/
+*.db
+*.db-*
+.env
+*.session
+sessions/
+telegram.md
+telegram_api.json
+
+# misc junk
+*.dump
+fetchall/
+
+# ide / os
+.cursor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

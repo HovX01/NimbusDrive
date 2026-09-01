@@ -1,0 +1,15 @@
+services:
+  nimbus:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file: .env
+    volumes:
+      - nimbus-data:/data
+    environment:
+      DATA_DIR: /data
+      DATABASE_URL: sqlite:///data/nimbus.db
+    restart: unless-stopped
+
+volumes:
+  nimbus-data:
