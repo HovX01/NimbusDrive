@@ -13,6 +13,7 @@ var (
 	ErrNotAuthenticated = errors.New("telegram not authenticated")
 	ErrTwoFARequired    = errors.New("two-factor password required")
 	ErrNotConfigured    = errors.New("telegram api credentials not configured")
+	ErrProviderConfig   = errors.New("provider credentials not configured")
 )
 
 type NodeType string
@@ -43,6 +44,8 @@ type Node struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// Duplicate is set on upload/fetch when content already exists (not stored).
+	Duplicate bool `json:"duplicate,omitempty"`
 }
 
 // PathCrumb is one segment of a drive breadcrumb.
@@ -86,6 +89,16 @@ type TelegramContact struct {
 	HasAvatar   bool   `json:"has_avatar"`
 }
 
+// TelegramBot is a bot the signed-in user has already opened in Telegram.
+// Allowed is false until the user opts in (Telegram-style consent).
+type TelegramBot struct {
+	ID          int64  `json:"id"`
+	Username    string `json:"username,omitempty"`
+	DisplayName string `json:"display_name"`
+	HasAvatar   bool   `json:"has_avatar"`
+	Allowed     bool   `json:"allowed"`
+}
+
 type AuthSession struct {
 	Phone         string
 	PhoneCodeHash string
@@ -93,11 +106,51 @@ type AuthSession struct {
 
 // ShareLink is a revocable public download token for a file.
 type ShareLink struct {
-	ID             string     `json:"id"`
-	Token          string     `json:"token"`
-	NodeID         string     `json:"node_id"`
-	CreatedAt      time.Time  `json:"created_at"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
-	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
-	DownloadCount  int        `json:"download_count"`
+	ID            string     `json:"id"`
+	Token         string     `json:"token"`
+	NodeID        string     `json:"node_id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	DownloadCount int        `json:"download_count"`
+}
+
+type SocialProvider string
+
+const (
+	SocialTikTok    SocialProvider = "tiktok"
+	SocialInstagram SocialProvider = "instagram"
+	SocialFacebook  SocialProvider = "facebook"
+)
+
+type SocialConnection struct {
+	ID          string         `json:"id,omitempty"`
+	Provider    SocialProvider `json:"provider"`
+	AccountID   string         `json:"account_id,omitempty"`
+	AccountKey  string         `json:"-"`
+	AuthType    string         `json:"auth_type,omitempty"`
+	DisplayName string         `json:"display_name,omitempty"`
+	Username    string         `json:"username,omitempty"`
+	Scopes      []string       `json:"scopes,omitempty"`
+	Connected   bool           `json:"connected"`
+	Enabled     bool           `json:"enabled"`
+	Active      bool           `json:"active"`
+	ExpiresAt   *time.Time     `json:"expires_at,omitempty"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+}
+
+type SocialConnectionSecret struct {
+	SocialConnection
+	AccessToken  string
+	RefreshToken string
+	CookiePath   string
+}
+
+type SocialOAuthAppConfig struct {
+	Provider      SocialProvider `json:"provider"`
+	ClientID      string         `json:"client_id,omitempty"`
+	ClientSecret  string         `json:"client_secret,omitempty"`
+	PublicBaseURL string         `json:"public_base_url,omitempty"`
+	Configured    bool           `json:"configured"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }

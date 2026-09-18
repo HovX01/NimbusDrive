@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nimbus API Documentation</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --surface: #1a1d27;
+        --border: #2a2f3d;
+        --text: #e8eaef;
+        --muted: #9aa3b5;
+        --accent: #5b9fd4;
+        --green: #3ecf8e;
+        --code-bg: #12151c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        min-height: 100vh;
+      }
+      nav {
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 1.5rem 1rem;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        overflow-y: auto;
+      }
+      nav h1 {
+        font-size: 1.1rem;
+        margin: 0 0 0.25rem;
+      }
+      nav .sub {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-bottom: 1.5rem;
+      }
+      nav a {
+        display: block;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.88rem;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+      }
+      nav a:hover { color: var(--text); background: var(--bg); }
+      main {
+        max-width: 820px;
+        padding: 2rem 2.5rem 4rem;
+      }
+      h2 {
+        margin: 2.5rem 0 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        font-size: 1.4rem;
+      }
+      h2:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+      h3 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: var(--accent); }
+      p, li { color: var(--muted); }
+      strong { color: var(--text); }
+      code {
+        background: var(--code-bg);
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.88em;
+        color: var(--green);
+      }
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1rem;
+        overflow-x: auto;
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+      pre code { background: none; padding: 0; color: #c5e8ff; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+        margin: 1rem 0;
+      }
+      th, td {
+        border: 1px solid var(--border);
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+      }
+      th { background: var(--surface); color: var(--text); }
+      td { color: var(--muted); }
+      .method {
+        display: inline-block;
+        font-weight: 700;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        margin-right: 0.35rem;
+      }
+      .get { background: #1e3a2f; color: #3ecf8e; }
+      .post { background: #1e2a3a; color: #5b9fd4; }
+      .patch { background: #3a301e; color: #e8b84a; }
+      .delete { background: #3a1e1e; color: #e85b5b; }
+      .badge {
+        display: inline-block;
+        background: #1e3a2f;
+        color: var(--green);
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        margin-bottom: 1rem;
+      }
+      @media (max-width: 768px) {
+        .layout { grid-template-columns: 1fr; }
+        nav { position: static; height: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <nav>
+        <h1>Nimbus API</h1>
+        <p class="sub">v1 · Self-hosted</p>
+        <a href="#overview">Overview</a>
+        <a href="#auth">Authentication</a>
+        <a href="#storage">Storage API</a>
+        <a href="#data">Data API</a>
+        <a href="#drive">Drive API</a>
+        <a href="#errors">Errors</a>
+        <a href="#example">Full example</a>
+      </nav>
+
+      <main>
+        <span class="badge">Base URL: http://localhost:9090</span>
+
+        <h2 id="overview">Overview</h2>
+        <p>
+          Nimbus is your self-hosted backend. <strong>Telegram</strong> stores file bytes.
+          <strong>SQLite</strong> stores metadata and app data. Your apps call one HTTP API.
+        </p>
+        <table>
+          <tr><th>API</th><th>Purpose</th><th>Backend</th></tr>
+          <tr><td><strong>Storage</strong></td><td>Upload, import, download files</td><td>Telegram</td></tr>
+          <tr><td><strong>Data</strong></td><td>CRUD + query collections</td><td>SQLite</td></tr>
+          <tr><td><strong>Drive</strong></td><td>Folders, trash, search</td><td>SQLite + Telegram</td></tr>
+        </table>
+
+        <h2 id="auth">Authentication</h2>
+        <h3>API key (for your apps)</h3>
+        <pre><code>X-Nimbus-Key: &lt;key from data/api.key&gt;
+
+# or
+Authorization: Bearer &lt;key&gt;</code></pre>
+        <p>Use for Storage API, Data API, and file operations.</p>
+
+        <h3>Access key (optional)</h3>
+        <p>When <code>NIMBUS_PUBLIC=false</code>, also send:</p>
+        <pre><code>X-Nimbus-Access: &lt;key from data/access.secret&gt;</code></pre>
+
+        <h3>JWT (web UI)</h3>
+        <p>Telegram login → <code>Authorization: Bearer &lt;jwt&gt;</code> for UI session endpoints.</p>
+
+        <h2 id="storage">Storage API</h2>
+
+        <h3><span class="method post">POST</span> /api/v1/files/upload</h3>
+        <p>Multipart upload. Returns <code>url</code> when using API key.</p>
+        <pre><code>curl -X POST http://localhost:9090/api/v1/files/upload \
+  -H "X-Nimbus-Key: YOUR_KEY" \
+  -F "file=@photo.jpg" \
+  -F "parent_id=root"</code></pre>
+
+        <h3><span class="method post">POST</span> /api/v1/files/import</h3>
+        <p>Import any HTTPS file URL.</p>
+        <pre><code>curl -X POST http://localhost:9090/api/v1/files/import \
+  -H "X-Nimbus-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com/photo.jpg"}'</code></pre>
+
+        <h3><span class="method get">GET</span> /api/v1/files/{id}/download</h3>
+        <p>Download file bytes. Supports <code>Range</code> header.</p>
+
+        <h3><span class="method get">GET</span> /api/v1/share/{token}/download</h3>
+        <p>Public download — no API key. Use in <code>&lt;img src&gt;</code>.</p>
+
+        <h2 id="data">Data API</h2>
+        <p>JSON collections in SQLite — like Supabase tables.</p>
+
+        <h3><span class="method get">GET</span> /api/v1/data/{collection}</h3>
+        <p>Query with filters:</p>
+        <table>
+          <tr><th>Filter</th><th>Example</th></tr>
+          <tr><td>equals</td><td><code>?status=eq.active</code></td></tr>
+          <tr><td>greater than</td><td><code>?price=gte.10</code></td></tr>
+          <tr><td>like</td><td><code>?name=like.*shirt*</code></td></tr>
+          <tr><td>sort</td><td><code>?order=price.desc</code></td></tr>
+          <tr><td>page</td><td><code>?limit=20&offset=0</code></td></tr>
+        </table>
+
+        <h3><span class="method post">POST</span> /api/v1/data/{collection}</h3>
+        <pre><code>curl -X POST http://localhost:9090/api/v1/data/products \
+  -H "X-Nimbus-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Shirt","price":29.99,"image_file_id":"FILE_UUID"}'</code></pre>
+
+        <h3><span class="method patch">PATCH</span> /api/v1/data/{collection}/{id}</h3>
+        <p>Update fields (merged into existing JSON).</p>
+
+        <h3><span class="method delete">DELETE</span> /api/v1/data/{collection}/{id}</h3>
+        <p>Delete row.</p>
+
+        <h3><span class="method get">GET</span> /api/v1/data/collections</h3>
+        <p>List all collection names.</p>
+
+        <h2 id="drive">Drive API</h2>
+        <table>
+          <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+          <tr><td>GET</td><td>/api/v1/files?parent_id=root</td><td>List folder</td></tr>
+          <tr><td>POST</td><td>/api/v1/folders</td><td>Create folder</td></tr>
+          <tr><td>PATCH</td><td>/api/v1/files/{id}</td><td>Rename</td></tr>
+          <tr><td>POST</td><td>/api/v1/files/{id}/move</td><td>Move</td></tr>
+          <tr><td>DELETE</td><td>/api/v1/files/{id}</td><td>Move to trash</td></tr>
+          <tr><td>GET</td><td>/api/v1/search?q=</td><td>Search files</td></tr>
+          <tr><td>POST</td><td>/api/v1/files/fetch</td><td>Fetch YouTube/TikTok URL</td></tr>
+          <tr><td>POST</td><td>/api/v1/files/{id}/share</td><td>Create public link</td></tr>
+        </table>
+
+        <h2 id="errors">Errors</h2>
+        <pre><code>{
+  "error": {
+    "code": "validation_error",
+    "message": "description"
+  }
+}</code></pre>
+
+        <h2 id="example">Full example</h2>
+        <p>Upload image to Telegram, save product in SQLite:</p>
+        <pre><code># 1. Upload image
+curl -X POST http://localhost:9090/api/v1/files/upload \
+  -H "X-Nimbus-Key: YOUR_KEY" -F "file=@shirt.jpg"
+# → { "id": "...", "url": "http://.../share/.../download" }
+
+# 2. Create product row
+curl -X POST http://localhost:9090/api/v1/data/products \
+  -H "X-Nimbus-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Blue Shirt",
+    "price": 29.99,
+    "image_file_id": "FILE_ID_FROM_STEP_1",
+    "image_url": "URL_FROM_STEP_1"
+  }'
+
+# 3. Query
+curl "http://localhost:9090/api/v1/data/products?order=created_at.desc" \
+  -H "X-Nimbus-Key: YOUR_KEY"</code></pre>
+
+        <p style="margin-top:2rem;color:var(--muted);font-size:0.85rem">
+          Interactive demo: <code>cd testAPI && npm run dev</code> → http://localhost:5199<br />
+          Markdown version: <a href="API.md" style="color:var(--accent)">docs/API.md</a>
+        </p>
+      </main>
+    </div>
+  </body>
+</html>

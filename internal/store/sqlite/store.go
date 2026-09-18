@@ -83,12 +83,31 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
 	if err := s.migrateShare(); err != nil {
 		return err
 	}
+	if err := s.migrateData(); err != nil {
+		return err
+	}
+	if err := s.migrateBots(); err != nil {
+		return err
+	}
+	if err := s.migrateEditor(); err != nil {
+		return err
+	}
+	if err := s.migrateSocial(); err != nil {
+		return err
+	}
 	return s.rebuildFTS(context.Background())
 }
 
 func (s *Store) migrateColumns() error {
 	_, _ = s.db.Exec(`ALTER TABLE nodes ADD COLUMN deleted_at TEXT`)
-	return nil
+	_, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS file_hashes (
+  hash TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_file_hashes_node ON file_hashes(node_id);
+`)
+	return err
 }
 
 func (s *Store) rebuildFTS(ctx context.Context) error {
@@ -306,6 +325,28 @@ func (s *Store) ListChildren(ctx context.Context, parentID string) ([]domain.Nod
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, parent_id, name, type, mime_type, size, status, channel_id, deleted_at, created_at, updated_at
 FROM nodes WHERE parent_id = ? AND status = 'ready' ORDER BY type DESC, name COLLATE NOCASE`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListReady(ctx context.Context, limit int) ([]domain.Node, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, parent_id, name, type, mime_type, size, status, channel_id, deleted_at, created_at, updated_at
+FROM nodes WHERE status = 'ready' AND id != 'root' ORDER BY type DESC, updated_at DESC, name COLLATE NOCASE LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -626,6 +667,28 @@ func (s *Store) DeleteByFile(ctx context.Context, fileID string) error {
 	return err
 }
 
+func (s *Store) FindByContentHash(ctx context.Context, hash string) (domain.Node, error) {
+	if hash == "" {
+		return domain.Node{}, domain.ErrNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `
+SELECT n.id, n.parent_id, n.name, n.type, n.mime_type, n.size, n.status, n.channel_id, n.deleted_at, n.created_at, n.updated_at
+FROM file_hashes h
+JOIN nodes n ON n.id = h.node_id
+WHERE h.hash = ? AND n.status = 'ready'`, hash)
+	return scanNode(row)
+}
+
+func (s *Store) SetContentHash(ctx context.Context, nodeID, hash string) error {
+	if nodeID == "" || hash == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO file_hashes (hash, node_id) VALUES (?, ?)
+ON CONFLICT(hash) DO UPDATE SET node_id = excluded.node_id`, hash, nodeID)
+	return err
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -656,8 +719,9 @@ func scanNode(row scanner) (domain.Node, error) {
 
 // Ensure Store implements ports.
 var (
-	_ domain.NodeRepository = (*Store)(nil)
-	_ domain.PartRepository = (*Store)(nil)
+	_ domain.NodeRepository        = (*Store)(nil)
+	_ domain.PartRepository        = (*Store)(nil)
+	_ domain.EditProjectRepository = (*Store)(nil)
 )
 
 func (s *Store) String() string { return fmt.Sprintf("sqlite.Store(%p)", s) }

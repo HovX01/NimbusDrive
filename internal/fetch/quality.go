@@ -4,10 +4,10 @@ package fetch
 var qualityBuckets = []int{144, 240, 360, 480, 720, 1080, 1440, 2160, 4320}
 
 // SnapHeight maps a requested max height onto the nearest allowed bucket ≤ want.
-// want<=0 defaults to 480 (fast default for Drive).
+// want<=0 means original/max (4320 bucket → Cobalt "max").
 func SnapHeight(want int) int {
 	if want <= 0 {
-		return 480
+		return 4320
 	}
 	best := qualityBuckets[0]
 	for _, b := range qualityBuckets {

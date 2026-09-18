@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,15 +25,19 @@ type Server struct {
 	svc              *app.Services
 	corsOrigins      []string
 	accessSecret     string
+	apiKey           string
 	requireAccessKey bool
+	webDir           string
 }
 
-func New(svc *app.Services, corsOrigins []string, accessSecret string, public bool) *Server {
+func New(svc *app.Services, corsOrigins []string, accessSecret, apiKey string, public bool, webDir string) *Server {
 	return &Server{
 		svc:              svc,
 		corsOrigins:      corsOrigins,
 		accessSecret:     accessSecret,
+		apiKey:           apiKey,
 		requireAccessKey: !public,
+		webDir:           strings.TrimSpace(webDir),
 	}
 }
 
@@ -45,7 +51,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   s.corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Range", "X-Nimbus-Access"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Range", "X-Nimbus-Access", "X-Nimbus-Key"},
 		ExposedHeaders:   []string{"Accept-Ranges", "Content-Range", "Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -54,19 +60,25 @@ func (s *Server) Router() http.Handler {
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "nimbus"})
 	})
-	r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"service": "nimbus",
-			"ui":      "http://localhost:5173",
-			"health":  "/health",
-			"api":     "/api/v1",
+	if s.webDir == "" {
+		r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{
+				"service": "nimbus",
+				"ui":      "http://localhost:5173",
+				"health":  "/health",
+				"api":     "/api/v1",
+				"docs":    "/docs/",
+			})
 		})
-	})
+	}
+
+	r.Handle("/docs/*", http.StripPrefix("/docs/", http.FileServer(http.Dir("docs"))))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/share/{token}", s.shareInfo)
 		r.Get("/share/{token}/download", s.shareDownload)
 		r.Get("/setup/status", s.setupStatus)
+		r.Get("/social/oauth/{provider}/callback", s.socialOAuthCallback)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.accessRequired)
@@ -76,20 +88,49 @@ func (s *Server) Router() http.Handler {
 			r.Post("/auth/resume", s.resume)
 
 			r.Group(func(r chi.Router) {
-				r.Use(s.authRequired)
-				r.Get("/auth/me", s.me)
-				r.Get("/auth/avatar", s.avatar)
-				r.Post("/auth/logout", s.logout)
+				r.Use(s.apiKeyOrSessionRequired)
 				r.Get("/contacts", s.listContacts)
+				r.Get("/social/connections", s.listSocialConnections)
+				r.Get("/social/oauth/config", s.listSocialOAuthConfigs)
+				r.Put("/social/oauth/config/{provider}", s.configureSocialOAuthProvider)
+				r.Get("/social/oauth/{provider}/start", s.startSocialOAuth)
+				r.Post("/social/connections/{provider}/cookies", s.addSocialCookieConnection)
+				r.Patch("/social/connections/{provider}", s.patchSocialConnection)
+				r.Post("/social/connections/{provider}/{id}/active", s.setActiveSocialConnection)
+				r.Delete("/social/connections/{provider}/{id}", s.deleteSocialConnection)
 				r.Get("/contacts/{id}/avatar", s.contactAvatar)
+				r.Get("/bots", s.listBots)
+				r.Patch("/bots/{id}", s.patchBot)
+				r.Get("/files/media/{jobID}", s.mediaJobStatus)
+				r.Get("/edit/projects", s.listEditProjects)
+				r.Get("/edit/projects/{projectID}", s.getEditProject)
+				r.Patch("/edit/projects/{projectID}", s.saveEditTimeline)
+				r.Delete("/edit/projects/{projectID}", s.deleteEditProject)
+				r.Post("/edit/projects/{projectID}/export", s.startEditExport)
+				r.Post("/edit/projects/{projectID}/captions/import", s.importCaptions)
+				r.Get("/edit/projects/{projectID}/captions/export", s.exportCaptions)
+				r.Get("/edit/jobs/{jobID}", s.editExportStatus)
 				r.Get("/files", s.listFiles)
+				r.Get("/data/collections", s.listDataCollections)
+				r.Get("/data/{collection}", s.queryData)
+				r.Post("/data/{collection}", s.insertData)
+				r.Get("/data/{collection}/{id}", s.getDataRow)
+				r.Patch("/data/{collection}/{id}", s.updateData)
+				r.Delete("/data/{collection}/{id}", s.deleteData)
 				r.Get("/search", s.search)
 				r.Post("/folders", s.mkdir)
 				r.Post("/files/upload", s.upload)
+				r.Post("/files/import", s.importURL)
 				r.Post("/files/fetch", s.fetchURL)
 				r.Get("/files/fetch/{jobID}", s.fetchJobStatus)
 				r.Get("/files/{id}/download", s.download)
+				r.Get("/files/{id}/probe", s.probeFile)
+				r.Get("/files/{id}/keyframes", s.getKeyframes)
+				r.Get("/files/{id}/proxy", s.serveEditorProxy)
+				r.Get("/files/{id}/proxy/status", s.proxyStatus)
 				r.Post("/files/{id}/send-telegram", s.sendTelegram)
+				r.Post("/files/{id}/media", s.startMedia)
+				r.Post("/files/{id}/edit/projects", s.createEditProject)
 				r.Get("/files/{id}/thumb", s.thumb)
 				r.Patch("/files/{id}", s.rename)
 				r.Post("/files/{id}/move", s.moveFile)
@@ -102,10 +143,49 @@ func (s *Server) Router() http.Handler {
 				r.Get("/files/{id}/shares", s.listShares)
 				r.Delete("/shares/{shareID}", s.revokeShare)
 			})
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.sessionRequired)
+				r.Get("/auth/me", s.me)
+				r.Get("/auth/avatar", s.avatar)
+				r.Post("/auth/logout", s.logout)
+				r.Get("/settings/storage", s.storageSettings)
+			})
 		})
 	})
 
+	if s.webDir != "" {
+		r.NotFound(spaHandler(s.webDir))
+	}
+
 	return r
+}
+
+func spaHandler(webDir string) http.HandlerFunc {
+	root := http.Dir(webDir)
+	fileServer := http.FileServer(root)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/docs/") {
+			http.NotFound(w, r)
+			return
+		}
+		path := strings.TrimPrefix(filepath.Clean(r.URL.Path), "/")
+		if path == "." || path == "" {
+			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+			return
+		}
+		f, err := root.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) || errors.Is(err, fs.ErrNotExist) {
+				http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+				return
+			}
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		_ = f.Close()
+		fileServer.ServeHTTP(w, r)
+	}
 }
 
 func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +198,7 @@ func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 		"configured":          configured,
 		"authorized":          authorized,
 		"access_key_required": s.requireAccessKey,
+		"api_key_configured":  s.apiKey != "",
 	})
 }
 
@@ -210,9 +291,36 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) storageSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"api_key":  s.apiKey,
+		"api_base": publicBase(r),
+	})
+}
+
+func intQuery(r *http.Request, key string, fallback int) int {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 	parent := r.URL.Query().Get("parent_id")
-	nodes, err := s.svc.List(r.Context(), parent)
+	var (
+		nodes []domain.Node
+		err   error
+	)
+	if r.URL.Query().Get("recursive") == "true" {
+		nodes, err = s.svc.ListAll(r.Context(), intQuery(r, "limit", 1000))
+	} else {
+		nodes, err = s.svc.List(r.Context(), parent)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -256,12 +364,12 @@ func (s *Server) mkdir(w http.ResponseWriter, r *http.Request) {
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	// Stream multipart; spill to disk above 32MiB so huge files are not held in RAM.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeErr(w, fmt.Errorf("%w: invalid multipart upload", domain.ErrValidation))
+		writeErr(w, fmt.Errorf("%w: invalid multipart upload: %v", domain.ErrValidation, err))
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeErr(w, domain.ErrValidation)
+		writeErr(w, fmt.Errorf("%w: file field required", domain.ErrValidation))
 		return
 	}
 	defer file.Close()
@@ -272,7 +380,35 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, node)
+	status := http.StatusCreated
+	if node.Duplicate {
+		status = http.StatusOK
+	}
+	s.writeFileResponse(w, r, status, node, wantsPublicURL(r))
+}
+
+func (s *Server) importURL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL      string `json:"url"`
+		ParentID string `json:"parent_id"`
+		Name     string `json:"name"`
+		Public   bool   `json:"public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, domain.ErrValidation)
+		return
+	}
+	if strings.TrimSpace(body.URL) == "" {
+		writeErr(w, fmt.Errorf("%w: url required", domain.ErrValidation))
+		return
+	}
+	node, err := s.svc.ImportURL(r.Context(), body.ParentID, body.URL, body.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	withURL := body.Public || wantsPublicURL(r)
+	s.writeFileResponse(w, r, http.StatusCreated, node, withURL)
 }
 
 func (s *Server) fetchURL(w http.ResponseWriter, r *http.Request) {
@@ -375,6 +511,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Content-Disposition", "inline; filename=\""+name+"\"")
 	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
 
 	start, end, ok, err := parseByteRange(r.Header.Get("Range"), meta.Size)
 	if err != nil {
@@ -512,6 +649,39 @@ func (s *Server) listContacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) listBots(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListBots(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if items == nil {
+		items = []domain.TelegramBot{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) patchBot(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "invalid bot id"}})
+		return
+	}
+	var body struct {
+		Allowed *bool `json:"allowed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Allowed == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "expected {\"allowed\": true|false}"}})
+		return
+	}
+	bot, err := s.svc.SetBotAllowed(r.Context(), id, *body.Allowed)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bot)
+}
+
 func (s *Server) contactAvatar(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -542,6 +712,31 @@ func (s *Server) sendTelegram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+func (s *Server) startMedia(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"message": "invalid json"}})
+		return
+	}
+	jobID, err := s.svc.StartMediaJob(r.Context(), chi.URLParam(r, "id"), body.Action)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+}
+
+func (s *Server) mediaJobStatus(w http.ResponseWriter, r *http.Request) {
+	st, err := s.svc.MediaJobStatus(chi.URLParam(r, "jobID"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) {
@@ -658,24 +853,17 @@ func (s *Server) accessRequired(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) authRequired(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := r.Header.Get("Authorization")
-		if !strings.HasPrefix(h, "Bearer ") {
-			writeErr(w, domain.ErrUnauthorized)
-			return
-		}
-		if _, err := s.svc.ParseToken(strings.TrimPrefix(h, "Bearer ")); err != nil {
-			writeErr(w, domain.ErrUnauthorized)
-			return
-		}
-		ok, err := s.svc.Authorized(r.Context())
-		if err != nil || !ok {
-			writeErr(w, domain.ErrUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+func (s *Server) writeFileResponse(w http.ResponseWriter, r *http.Request, status int, node domain.Node, withURL bool) {
+	if !withURL {
+		writeJSON(w, status, node)
+		return
+	}
+	info, err := s.svc.CreateShare(r.Context(), node.ID, publicBase(r))
+	if err != nil {
+		writeJSON(w, status, node)
+		return
+	}
+	writeJSON(w, status, app.StoredFile{Node: node, URL: info.URL})
 }
 
 func secureEqual(want, got string) bool {
@@ -706,6 +894,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		status, code = http.StatusBadRequest, "validation_error"
 	case errors.Is(err, domain.ErrNotConfigured):
 		status, code = http.StatusPreconditionRequired, "not_configured"
+	case errors.Is(err, domain.ErrProviderConfig):
+		status, code = http.StatusPreconditionRequired, "provider_not_configured"
 	case errors.Is(err, domain.ErrUnauthorized), errors.Is(err, domain.ErrNotAuthenticated):
 		status, code = http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, domain.ErrNotFound):

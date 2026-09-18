@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { listContacts, type TelegramContact } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { listBots, listContacts, type TelegramContact } from "../api";
 import { ContactAvatar } from "./ContactAvatar";
 import { Portal } from "./Portal";
 
@@ -17,9 +17,20 @@ function contactHandle(c: TelegramContact) {
   return c.display_name;
 }
 
+function matchesQuery(c: TelegramContact, query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    c.display_name.toLowerCase().includes(q) ||
+    (c.username?.toLowerCase().includes(q) ?? false) ||
+    (c.first_name?.toLowerCase().includes(q) ?? false)
+  );
+}
+
 export function SendTelegramModal({ token, fileName, busy, error, onClose, onSend }: Props) {
   const [query, setQuery] = useState("");
   const [contacts, setContacts] = useState<TelegramContact[]>([]);
+  const [bots, setBots] = useState<TelegramContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [selected, setSelected] = useState<TelegramContact | null>(null);
@@ -29,14 +40,28 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
     const timer = window.setTimeout(() => {
       setLoading(true);
       setListError("");
-      listContacts(token, query)
-        .then((r) => {
-          if (!cancelled) setContacts(r.items ?? []);
+      Promise.all([listContacts(token, query), listBots(token)])
+        .then(([people, botRes]) => {
+          if (cancelled) return;
+          setContacts(people.items ?? []);
+          setBots(
+            (botRes.items ?? [])
+              .filter((b) => b.allowed)
+              .map((b) => ({
+                id: b.id,
+                username: b.username,
+                first_name: b.display_name,
+                display_name: b.display_name,
+                has_avatar: b.has_avatar,
+                is_bot: true,
+              })),
+          );
         })
         .catch((e) => {
           if (!cancelled) {
             setListError((e as Error).message);
             setContacts([]);
+            setBots([]);
           }
         })
         .finally(() => {
@@ -48,6 +73,23 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
       window.clearTimeout(timer);
     };
   }, [token, query]);
+
+  const recipients = useMemo(() => {
+    const seen = new Set<number>();
+    const out: TelegramContact[] = [];
+    // Allowed bots first (Telegram lets you DM bots the same way as people).
+    for (const b of bots) {
+      if (!matchesQuery(b, query) || seen.has(b.id)) continue;
+      seen.add(b.id);
+      out.push(b);
+    }
+    for (const c of contacts) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+    }
+    return out;
+  }, [bots, contacts, query]);
 
   return (
     <Portal>
@@ -63,7 +105,9 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
             <div>
               <p className="eyebrow">Send to Telegram</p>
               <h2>{fileName}</h2>
-              <p className="meta">Choose a contact to receive this file in a Telegram chat.</p>
+              <p className="meta">
+                Pick a person or an <strong>allowed bot</strong> — same as sending a file in Telegram.
+              </p>
             </div>
             <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
               <i className="fa-solid fa-xmark" />
@@ -73,7 +117,7 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
             {busy && (
               <div className="send-telegram-overlay" role="status" aria-live="polite">
                 <i className="fa-solid fa-spinner fa-spin" aria-hidden />
-                <p>Sending to {selected?.display_name ?? "contact"}…</p>
+                <p>Sending to {selected?.display_name ?? "chat"}…</p>
                 <span className="meta">This may take a moment for large files.</span>
               </div>
             )}
@@ -83,19 +127,21 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search contacts"
+                placeholder="Search people or bots"
                 autoFocus
               />
             </label>
             {listError && <p className="banner error compact">{listError}</p>}
             {error && <p className="banner error compact">{error}</p>}
             {loading ? (
-              <p className="meta">Loading contacts…</p>
-            ) : contacts.length === 0 ? (
-              <p className="meta">No contacts found.</p>
+              <p className="meta">Loading…</p>
+            ) : recipients.length === 0 ? (
+              <p className="meta">
+                No matches. Allow a bot in Settings, or open it in Telegram (tap Start) first.
+              </p>
             ) : (
               <ul className="send-telegram-list">
-                {contacts.map((c) => (
+                {recipients.map((c) => (
                   <li key={c.id}>
                     <button
                       type="button"
@@ -105,7 +151,10 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
                     >
                       <ContactAvatar token={token} contact={c} />
                       <span className="send-telegram-meta">
-                        <span className="truncate">{c.display_name}</span>
+                        <span className="row gap" style={{ alignItems: "center" }}>
+                          <span className="truncate">{c.display_name}</span>
+                          {c.is_bot && <span className="send-bot-badge">Bot</span>}
+                        </span>
                         <span className="meta truncate">{contactHandle(c)}</span>
                       </span>
                       <i className="fa-solid fa-chevron-right send-telegram-icon" />
@@ -118,7 +167,12 @@ export function SendTelegramModal({ token, fileName, busy, error, onClose, onSen
           {selected && !busy && (
             <footer className="modal-foot send-telegram-foot">
               <p className="send-telegram-confirm">
-                Send <strong>{fileName}</strong> to <strong>{selected.display_name}</strong>?
+                Send <strong>{fileName}</strong> to{" "}
+                <strong>
+                  {selected.display_name}
+                  {selected.is_bot ? " (bot)" : ""}
+                </strong>
+                ?
               </p>
               <div className="row end gap">
                 <button type="button" className="btn ghost" onClick={() => setSelected(null)}>

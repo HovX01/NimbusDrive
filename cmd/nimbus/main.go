@@ -52,11 +52,17 @@ func main() {
 	} else {
 		log.Printf("access key required: X-Nimbus-Access (see %s)", filepath.Join(cfg.DataDir, "access.secret"))
 	}
+	log.Printf("storage API key: X-Nimbus-Key (see %s)", filepath.Join(cfg.DataDir, "api.key"))
 
 	svc := &app.Services{
 		Nodes:         store,
 		Parts:         store,
 		Shares:        store,
+		Data:          store,
+		Edits:         store,
+		BotGrants:     store,
+		Social:        store,
+		SocialApp:     store,
 		Blobs:         tg,
 		TG:            tg,
 		Messenger:     tg,
@@ -67,13 +73,20 @@ func main() {
 		DataDir:       cfg.DataDir,
 		UploadWorkers: 3,
 	}
+	svc.ConfigureSocialOAuth(app.SocialOAuthConfig{
+		PublicBaseURL:   cfg.PublicBaseURL,
+		TikTokClientKey: cfg.TikTokClientKey,
+		TikTokSecret:    cfg.TikTokSecret,
+		MetaAppID:       cfg.MetaAppID,
+		MetaAppSecret:   cfg.MetaAppSecret,
+	})
 	if _, err := store.EnsureRoot(ctx); err != nil {
 		log.Fatalf("root: %v", err)
 	}
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpserver.New(svc, cfg.CORSOrigins, cfg.AccessSecret, cfg.Public).Router(),
+		Handler:           httpserver.New(svc, cfg.CORSOrigins, cfg.AccessSecret, cfg.APIKey, cfg.Public, cfg.WebDir).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

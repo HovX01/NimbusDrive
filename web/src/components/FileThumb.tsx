@@ -34,8 +34,7 @@ export function FileThumb({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Thumbs are image JPEGs from the server; videos keep icon until true poster exists.
-    if (isFolder || kind !== "image") return;
+    if (isFolder || (kind !== "image" && kind !== "video")) return;
 
     let cancelled = false;
     let objectUrl: string | null = null;
@@ -89,16 +88,21 @@ export function FileThumb({
     };
   }, [token, id, isFolder, kind]);
 
-  const showImage = kind === "image" && !!src && !failed;
+  const showMedia = (kind === "image" || kind === "video") && !!src && !failed;
 
   return (
     <div
       ref={ref}
-      className={`file-badge kind-${kind} ${compact ? "compact" : ""} ${showImage ? "has-media" : ""}`}
+      className={`file-badge kind-${kind} ${compact ? "compact" : ""} ${showMedia ? "has-media" : ""}`}
       aria-hidden
     >
-      {showImage && <img src={src!} alt="" className="thumb-media" />}
-      {!showImage && <i className={`${FA[kind]} fa-icon`} />}
+      {showMedia && <img src={src!} alt="" className="thumb-media" />}
+      {showMedia && kind === "video" && (
+        <span className="thumb-play" aria-hidden>
+          <i className="fa-solid fa-play" />
+        </span>
+      )}
+      {!showMedia && <i className={`${FA[kind]} fa-icon`} />}
     </div>
   );
 }

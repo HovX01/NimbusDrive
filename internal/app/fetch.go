@@ -17,14 +17,16 @@ import (
 
 // FetchJobStatus is one async URL→Drive job (Cobalt-style extract + progress).
 type FetchJobStatus struct {
-	ID        string       `json:"id"`
-	Status    string       `json:"status"` // queued|running|done|error
-	Phase     string       `json:"phase"`  // download|upload|done|error
-	Progress  float64      `json:"progress"`
-	Message   string       `json:"message"`
-	ErrorCode string       `json:"error_code,omitempty"`
-	Service   string       `json:"service,omitempty"`
-	Node      *domain.Node `json:"node,omitempty"`
+	ID        string        `json:"id"`
+	Status    string        `json:"status"` // queued|running|done|error
+	Phase     string        `json:"phase"`  // download|upload|done|error
+	Progress  float64       `json:"progress"`
+	Message   string        `json:"message"`
+	ErrorCode string        `json:"error_code,omitempty"`
+	Service   string        `json:"service,omitempty"`
+	Node      *domain.Node  `json:"node,omitempty"`  // first file (compat)
+	Nodes     []domain.Node `json:"nodes,omitempty"` // all files from multi-media posts
+	Count     int           `json:"count,omitempty"`
 }
 
 type fetchJob struct {
@@ -37,6 +39,7 @@ type fetchJob struct {
 	errorCode string
 	service   string
 	node      *domain.Node
+	nodes     []domain.Node
 }
 
 func (j *fetchJob) snapshot() FetchJobStatus {
@@ -50,10 +53,14 @@ func (j *fetchJob) snapshot() FetchJobStatus {
 		Message:   j.message,
 		ErrorCode: j.errorCode,
 		Service:   j.service,
+		Count:     len(j.nodes),
 	}
 	if j.node != nil {
 		n := *j.node
 		out.Node = &n
+	}
+	if len(j.nodes) > 0 {
+		out.Nodes = append([]domain.Node(nil), j.nodes...)
 	}
 	return out
 }
@@ -167,6 +174,7 @@ func (s *Services) runFetchJob(jobID, parentID, rawURL, mode string, maxHeight i
 		Mode:      mode,
 		MaxHeight: maxHeight,
 		Cookies:   s.cookiesPath(),
+		AuthToken: s.socialBearerForService(ctx, job.service),
 		OnProgress: func(pct float64, msg string) {
 			if pct >= 0 {
 				job.set("running", "download", msg, pct*0.85)
@@ -175,8 +183,11 @@ func (s *Services) runFetchJob(jobID, parentID, rawURL, mode string, maxHeight i
 			}
 		},
 	}
+	if cookies := s.socialCookiesForService(ctx, job.service); cookies != "" {
+		opt.Cookies = cookies
+	}
 
-	var path string
+	var paths []string
 	var lastClass fetch.Classified
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -193,7 +204,7 @@ func (s *Services) runFetchJob(jobID, parentID, rawURL, mode string, maxHeight i
 
 		p, err := s.downloadNative(ctx, job, rawURL, opt)
 		if err == nil {
-			path = p
+			paths = p
 			lastClass = fetch.Classified{}
 			break
 		}
@@ -207,7 +218,7 @@ func (s *Services) runFetchJob(jobID, parentID, rawURL, mode string, maxHeight i
 		}
 		job.set("running", "download", lastClass.Message, -1)
 	}
-	if path == "" {
+	if len(paths) == 0 {
 		if lastClass.Code == "" {
 			lastClass = fetch.Classified{Code: fetch.CodeFetchFail, Message: "Download failed"}
 		}
@@ -215,40 +226,74 @@ func (s *Services) runFetchJob(jobID, parentID, rawURL, mode string, maxHeight i
 		return
 	}
 
-	job.set("running", "upload", "Uploading to Drive…", 88)
-	f, err := os.Open(path)
-	if err != nil {
-		job.fail(fetch.CodeFetchFail, err.Error())
-		return
+	jobDir := filepath.Dir(paths[0])
+	defer os.RemoveAll(jobDir)
+
+	nodes := make([]domain.Node, 0, len(paths))
+	dupes := 0
+	for i, path := range paths {
+		job.set("running", "upload", fmt.Sprintf("Uploading %d/%d to Drive…", i+1, len(paths)), 88+float64(i)*10/float64(len(paths)))
+		f, err := os.Open(path)
+		if err != nil {
+			job.fail(fetch.CodeFetchFail, err.Error())
+			return
+		}
+		info, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			job.fail(fetch.CodeFetchFail, err.Error())
+			return
+		}
+		name := domain.SanitizeDownloadName(filepath.Base(path))
+		node, err := s.Upload(ctx, parentID, name, "", f, info.Size())
+		_ = f.Close()
+		if err != nil {
+			job.fail(fetch.CodeFetchFail, err.Error())
+			return
+		}
+		if node.Duplicate {
+			dupes++
+		}
+		nodes = append(nodes, node)
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		job.fail(fetch.CodeFetchFail, err.Error())
-		return
-	}
-	name := domain.SanitizeDownloadName(filepath.Base(path))
-	node, err := s.Upload(ctx, parentID, name, "", f, info.Size())
-	_ = os.RemoveAll(filepath.Dir(path))
-	if err != nil {
-		job.fail(fetch.CodeFetchFail, err.Error())
-		return
-	}
+
 	job.mu.Lock()
-	job.node = &node
+	job.nodes = nodes
+	if len(nodes) > 0 {
+		n := nodes[0]
+		job.node = &n
+	}
 	job.status = "done"
 	job.phase = "done"
 	job.progress = 100
-	job.message = "Saved to Drive"
+	switch {
+	case len(nodes) == 1 && nodes[0].Duplicate:
+		job.message = "Already in Drive (duplicate skipped)"
+	case len(nodes) == 1:
+		job.message = "Saved to Drive"
+	case dupes == len(nodes):
+		job.message = fmt.Sprintf("All %d files already in Drive", len(nodes))
+	case dupes > 0:
+		job.message = fmt.Sprintf("Saved %d files (%d already in Drive)", len(nodes)-dupes, dupes)
+	default:
+		job.message = fmt.Sprintf("Saved %d files to Drive", len(nodes))
+	}
 	job.errorCode = ""
 	job.mu.Unlock()
 }
 
-func (s *Services) downloadNative(ctx context.Context, job *fetchJob, rawURL string, opt fetch.Options) (string, error) {
-	job.set("running", "download", "Extracting media URL…", 5)
+func (s *Services) downloadNative(ctx context.Context, job *fetchJob, rawURL string, opt fetch.Options) ([]string, error) {
+	job.set("running", "download", "Extracting media…", 5)
+	tmpRoot := filepath.Join(s.DataDir, "fetch-tmp")
+	jobDir := filepath.Join(tmpRoot, job.id+"-"+uuid.NewString()[:8])
+	if err := os.MkdirAll(jobDir, 0o700); err != nil {
+		return nil, err
+	}
+	opt.TempDir = jobDir
 	media, err := fetch.Resolve(ctx, rawURL, opt)
 	if err != nil {
-		return "", err
+		_ = os.RemoveAll(jobDir)
+		return nil, err
 	}
 	if media.Service != "" {
 		job.mu.Lock()
@@ -256,20 +301,19 @@ func (s *Services) downloadNative(ctx context.Context, job *fetchJob, rawURL str
 		job.mu.Unlock()
 	}
 
-	tmpRoot := filepath.Join(s.DataDir, "fetch-tmp")
-	jobDir := filepath.Join(tmpRoot, job.id+"-"+uuid.NewString()[:8])
-	if err := os.MkdirAll(jobDir, 0o700); err != nil {
-		return "", err
+	n := len(media.AllItems())
+	if n > 1 {
+		job.set("running", "download", fmt.Sprintf("Downloading %d files…", n), 8)
+	} else {
+		job.set("running", "download", "Downloading…", 8)
 	}
-
-	job.set("running", "download", "Downloading…", 8)
-	path, err := fetch.DownloadToFile(ctx, media, jobDir, opt.OnProgress)
+	paths, err := fetch.DownloadAllToFiles(ctx, media, jobDir, opt.OnProgress)
 	if err != nil {
 		_ = os.RemoveAll(jobDir)
-		return "", err
+		return nil, err
 	}
 	job.set("running", "download", "Download finished", 85)
-	return path, nil
+	return paths, nil
 }
 
 func (s *Services) cookiesPath() string {

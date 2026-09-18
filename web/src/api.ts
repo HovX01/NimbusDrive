@@ -18,6 +18,8 @@ export type Node = {
   mime_type: string;
   size: number;
   status: string;
+  duplicate?: boolean;
+  url?: string;
 };
 
 export type PathCrumb = { id: string; name: string };
@@ -125,8 +127,12 @@ export async function logout(token: string) {
   );
 }
 
-export async function listFiles(token: string, parentId: string) {
-  const q = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : "";
+export async function listFiles(token: string, parentId: string, options?: { recursive?: boolean; limit?: number }) {
+  const params = new URLSearchParams();
+  if (parentId) params.set("parent_id", parentId);
+  if (options?.recursive) params.set("recursive", "true");
+  if (options?.limit) params.set("limit", String(options.limit));
+  const q = params.toString() ? `?${params.toString()}` : "";
   return parse<{ items: Node[] }>(
     await fetch(`${API}/api/v1/files${q}`, { headers: authHeaders(token) }),
   );
@@ -263,6 +269,8 @@ export type TelegramContact = {
   last_name?: string;
   display_name: string;
   has_avatar: boolean;
+  /** Present when this recipient is an allowed Telegram bot. */
+  is_bot?: boolean;
 };
 
 export async function listContacts(token: string, query = "") {
@@ -331,6 +339,389 @@ export function publicShareUrl(token: string) {
   return `${API}/api/v1/share/${token}/download`;
 }
 
+export type StoredFile = Node & { url?: string };
+
+export async function fetchStorageSettings(token: string) {
+  return parse<{ api_key: string; api_base: string }>(
+    await fetch(`${API}/api/v1/settings/storage`, { headers: authHeaders(token) }),
+  );
+}
+
+export type TelegramBot = {
+  id: number;
+  username?: string;
+  display_name: string;
+  has_avatar: boolean;
+  allowed: boolean;
+};
+
+export async function listBots(token: string) {
+  return parse<{ items: TelegramBot[] }>(
+    await fetch(`${API}/api/v1/bots`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function setBotAllowed(token: string, botId: number, allowed: boolean) {
+  return parse<TelegramBot>(
+    await fetch(`${API}/api/v1/bots/${botId}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ allowed }),
+    }),
+  );
+}
+
+export type SocialProvider = "tiktok" | "instagram" | "facebook";
+
+export type SocialConnection = {
+  id?: string;
+  provider: SocialProvider;
+  account_id?: string;
+  auth_type?: string;
+  display_name?: string;
+  username?: string;
+  scopes?: string[];
+  connected: boolean;
+  enabled: boolean;
+  active: boolean;
+  expires_at?: string;
+  updated_at: string;
+};
+
+export type SocialOAuthAppConfig = {
+  provider: SocialProvider;
+  client_id?: string;
+  client_secret?: string;
+  public_base_url?: string;
+  configured: boolean;
+  updated_at: string;
+};
+
+export async function listSocialConnections(token: string) {
+  return parse<{ items: SocialConnection[] }>(
+    await fetch(`${API}/api/v1/social/connections`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function listSocialOAuthConfigs(token: string) {
+  return parse<{ items: SocialOAuthAppConfig[] }>(
+    await fetch(`${API}/api/v1/social/oauth/config`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function saveSocialOAuthConfig(
+  token: string,
+  provider: SocialProvider,
+  body: { client_id: string; client_secret: string; public_base_url: string },
+) {
+  return parse<SocialOAuthAppConfig>(
+    await fetch(`${API}/api/v1/social/oauth/config/${provider}`, {
+      method: "PUT",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function addSocialCookieConnection(
+  token: string,
+  provider: SocialProvider,
+  displayName: string,
+  file: Blob,
+) {
+  const fd = new FormData();
+  fd.append("cookies", file, "cookies.txt");
+  if (displayName.trim()) fd.append("display_name", displayName.trim());
+  return parse<SocialConnection>(
+    await fetch(`${API}/api/v1/social/connections/${provider}/cookies`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: fd,
+    }),
+  );
+}
+
+export async function startSocialOAuth(token: string, provider: SocialProvider) {
+  return parse<{ url: string }>(
+    await fetch(`${API}/api/v1/social/oauth/${provider}/start`, { headers: authHeaders(token) }),
+  );
+}
+
+export function socialOAuthStartUrl(token: string, provider: SocialProvider) {
+  const q = new URLSearchParams({ token, redirect: "1" });
+  const access = getAccessKey();
+  if (access) q.set("access", access);
+  return `${API}/api/v1/social/oauth/${provider}/start?${q}`;
+}
+
+export async function setSocialConnectionEnabled(token: string, provider: SocialProvider, enabled: boolean) {
+  return parse<SocialConnection>(
+    await fetch(`${API}/api/v1/social/connections/${provider}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
+  );
+}
+
+export async function setActiveSocialConnection(token: string, provider: SocialProvider, id: string) {
+  return parse<SocialConnection>(
+    await fetch(`${API}/api/v1/social/connections/${provider}/${encodeURIComponent(id)}/active`, {
+      method: "POST",
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function disconnectSocialConnection(token: string, provider: SocialProvider, id: string) {
+  return parse<{ status: string }>(
+    await fetch(`${API}/api/v1/social/connections/${provider}/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export type MediaAction = "enhance" | "compress" | "playable" | "extract_audio";
+
+export type MediaJobStatus = {
+  id: string;
+  action: MediaAction | string;
+  status: "queued" | "running" | "done" | "error" | string;
+  phase: string;
+  progress: number;
+  message: string;
+  node?: Node;
+};
+
+export type EditProject = {
+  id: string;
+  source_node_id: string;
+  name: string;
+  timeline_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TimelineData = {
+  duration: number;
+  tracks: TimelineTrack[];
+};
+
+export type TimelineTrack = {
+  id: string;
+  type: "video" | "audio" | "text" | "caption" | "image";
+  clips: TimelineClip[];
+  muted?: boolean;
+};
+
+export type TimelineClip = {
+  id: string;
+  sourceNodeId: string;
+  startInSource: number;
+  endInSource: number;
+  startOnTimeline: number;
+  speed?: number;
+  hasEffects?: boolean;
+  volume?: number;
+  fade_in?: number;
+  fade_out?: number;
+  text?: TextOverlay;
+  transition?: Transition;
+};
+
+export type ExportPreset = "match" | "1080p" | "compressed";
+
+export type TextOverlay = {
+  content: string;
+  font_size: number;
+  font_family: string;
+  color: string;
+  bg_color: string;
+  x: number;
+  y: number;
+  alignment: "center" | "left" | "right";
+  animation: "none" | "fade" | "slide-up" | "typewriter";
+};
+
+export type Transition = {
+  type: "crossfade" | "fade-black" | "wipe-left";
+  duration: number;
+};
+
+export type FileProbe = {
+  duration: number;
+  width: number;
+  height: number;
+  video_codec: string;
+  audio_codec: string;
+  has_audio: boolean;
+};
+
+export type Caption = {
+  index: number;
+  start_time: number;
+  end_time: number;
+  text: string;
+};
+
+export type EditExportJobStatus = {
+  id: string;
+  project_id: string;
+  status: "queued" | "running" | "done" | "error" | string;
+  phase: string;
+  progress: number;
+  message: string;
+  node?: Node;
+};
+
+export async function startMediaJob(token: string, fileId: string, action: MediaAction) {
+  return parse<{ job_id: string }>(
+    await fetch(`${API}/api/v1/files/${fileId}/media`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    }),
+  );
+}
+
+export async function mediaJobStatus(token: string, jobId: string) {
+  return parse<MediaJobStatus>(
+    await fetch(`${API}/api/v1/files/media/${encodeURIComponent(jobId)}`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function createEditProject(token: string, fileId: string) {
+  return parse<{ project: EditProject }>(
+    await fetch(`${API}/api/v1/files/${fileId}/edit/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function listEditProjects(token: string) {
+  return parse<{ projects: EditProject[] }>(
+    await fetch(`${API}/api/v1/edit/projects`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function getEditProject(token: string, projectId: string) {
+  return parse<{ project: EditProject }>(
+    await fetch(`${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function saveEditTimeline(token: string, projectId: string, timeline: TimelineData) {
+  return parse<{ ok: boolean }>(
+    await fetch(`${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ timeline_json: JSON.stringify(timeline) }),
+    }),
+  );
+}
+
+export function saveEditTimelineBeacon(token: string, projectId: string, timeline: TimelineData) {
+  const params = new URLSearchParams({ token });
+  const access = getAccessKey();
+  if (access) params.set("access", access);
+  const body = JSON.stringify({ timeline_json: JSON.stringify(timeline) });
+  const blob = new Blob([body], { type: "application/json" });
+  return navigator.sendBeacon?.(`${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}?${params}`, blob) ?? false;
+}
+
+export async function deleteEditProject(token: string, projectId: string) {
+  const res = await fetch(`${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) await parse(res);
+}
+
+export async function startEditExport(token: string, projectId: string, preset: ExportPreset) {
+  return parse<{ job_id: string }>(
+    await fetch(`${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}/export`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ preset }),
+    }),
+  );
+}
+
+export async function getEditExportStatus(token: string, jobId: string) {
+  return parse<EditExportJobStatus>(
+    await fetch(`${API}/api/v1/edit/jobs/${encodeURIComponent(jobId)}`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function probeFile(token: string, fileId: string) {
+  return parse<FileProbe>(
+    await fetch(`${API}/api/v1/files/${encodeURIComponent(fileId)}/probe`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function getKeyframes(token: string, fileId: string, start = 0, end = 0) {
+  const q = new URLSearchParams({ start: String(start), end: String(end) });
+  return parse<{ keyframes: number[] }>(
+    await fetch(`${API}/api/v1/files/${encodeURIComponent(fileId)}/keyframes?${q}`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function getProxyStatus(token: string, id: string) {
+  return parse<{ status: "none" | "generating" | "ready" | "error"; message?: string }>(
+    await fetch(`${API}/api/v1/files/${encodeURIComponent(id)}/proxy/status`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export function proxyStreamUrl(token: string, id: string) {
+  const q = new URLSearchParams({ token });
+  const access = getAccessKey();
+  if (access) q.set("access", access);
+  return `${API}/api/v1/files/${encodeURIComponent(id)}/proxy?${q}`;
+}
+
+export async function importCaptions(token: string, projectId: string, file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return parse<{ captions: Caption[] }>(
+    await fetch(`${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}/captions/import`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: fd,
+    }),
+  );
+}
+
+export function captionExportUrl(token: string, projectId: string) {
+  const q = new URLSearchParams({ token });
+  const access = getAccessKey();
+  if (access) q.set("access", access);
+  return `${API}/api/v1/edit/projects/${encodeURIComponent(projectId)}/captions/export?${q}`;
+}
+
+export async function importFileURL(token: string, parentId: string, url: string) {
+  return parse<StoredFile>(
+    await fetch(`${API}/api/v1/files/import`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ parent_id: parentId, url, public: true }),
+    }),
+  );
+}
+
 export async function fetchFromURL(
   token: string,
   parentId: string,
@@ -359,6 +750,8 @@ export type FetchJobStatus = {
   error_code?: string;
   service?: string;
   node?: Node;
+  nodes?: Node[];
+  count?: number;
 };
 
 export async function fetchJobStatus(token: string, jobId: string) {
@@ -371,6 +764,15 @@ export async function fetchJobStatus(token: string, jobId: string) {
 
 export function downloadUrl(id: string) {
   return `${API}/api/v1/files/${id}/download`;
+}
+
+/** Authenticated media URL for <video>/<audio> (supports Range streaming). */
+export function mediaStreamUrl(token: string, id: string) {
+  const base = downloadUrl(id);
+  const q = new URLSearchParams({ token });
+  const access = getAccessKey();
+  if (access) q.set("access", access);
+  return `${base}?${q}`;
 }
 
 export function thumbUrl(id: string) {

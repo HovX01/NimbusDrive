@@ -3,10 +3,13 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +26,11 @@ type Services struct {
 	Nodes     domain.NodeRepository
 	Parts     domain.PartRepository
 	Shares    domain.ShareRepository
+	Data      domain.DataRepository
+	Edits     domain.EditProjectRepository
+	BotGrants domain.BotGrantRepository
+	Social    domain.SocialConnectionRepository
+	SocialApp domain.SocialOAuthConfigRepository
 	Blobs     domain.BlobStore
 	TG        domain.TelegramAuth
 	Messenger domain.TelegramMessenger
@@ -36,6 +44,19 @@ type Services struct {
 
 	fetchOnce sync.Once
 	fetchJobs *fetchHub
+
+	socialMu      sync.Mutex
+	socialStates  map[string]socialOAuthState
+	socialBaseURL string
+
+	mediaOnce sync.Once
+	mediaJobs *mediaHub
+
+	editExportOnce sync.Once
+	editExportJobs *editExportHub
+
+	proxyOnce sync.Once
+	proxyJobs *proxyHub
 }
 
 type tokenClaims struct {
@@ -169,6 +190,10 @@ func (s *Services) List(ctx context.Context, parentID string) ([]domain.Node, er
 	return s.Nodes.ListChildren(ctx, parentID)
 }
 
+func (s *Services) ListAll(ctx context.Context, limit int) ([]domain.Node, error) {
+	return s.Nodes.ListReady(ctx, limit)
+}
+
 func (s *Services) Search(ctx context.Context, query string, limit int) ([]domain.SearchHit, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -208,12 +233,56 @@ func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeTy
 	if _, err := s.Nodes.Get(ctx, parentID); err != nil {
 		return domain.Node{}, err
 	}
+	var nameErr error
+	filename, nameErr = s.uniqueChildName(ctx, parentID, filename)
+	if nameErr != nil {
+		return domain.Node{}, nameErr
+	}
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		if guessed := mime.TypeByExtension(filepath.Ext(filename)); guessed != "" {
 			mimeType = guessed
 		} else if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
+	}
+
+	tmpDir := filepath.Join(s.DataDir, "upload-tmp")
+	if strings.TrimSpace(s.DataDir) == "" {
+		tmpDir = filepath.Join(os.TempDir(), "nimbus-upload")
+	}
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		return domain.Node{}, err
+	}
+	tmp, err := os.CreateTemp(tmpDir, "up-*")
+	if err != nil {
+		return domain.Node{}, err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+	}()
+
+	h := sha256.New()
+	written, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, (2<<30)+1))
+	if err != nil {
+		return domain.Node{}, err
+	}
+	if written == 0 {
+		return domain.Node{}, fmt.Errorf("%w: empty file", domain.ErrValidation)
+	}
+	if written > 2<<30 {
+		return domain.Node{}, fmt.Errorf("%w: file too large", domain.ErrValidation)
+	}
+	hash := hex.EncodeToString(h.Sum(nil))
+	if existing, err := s.Nodes.FindByContentHash(ctx, hash); err == nil {
+		existing.Duplicate = true
+		return existing, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Node{}, err
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return domain.Node{}, err
 	}
 
 	channelID, err := s.Blobs.EnsureStorageChannel(ctx)
@@ -258,7 +327,7 @@ func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeTy
 
 loop:
 	for {
-		n, readErr := io.ReadFull(r, buf)
+		n, readErr := io.ReadFull(tmp, buf)
 		if n > 0 {
 			mu.Lock()
 			pn := partNo
@@ -330,16 +399,37 @@ loop:
 	if err := s.Nodes.UpdateStatus(ctx, node.ID, domain.StatusReady); err != nil {
 		return domain.Node{}, err
 	}
+	_ = s.Nodes.SetContentHash(ctx, node.ID, hash)
 	node.Size = finalTotal
 	node.Status = domain.StatusReady
 
-	// Build image thumb in background so grid cards stay fast.
-	if strings.HasPrefix(mimeType, "image/") {
+	// Build image/video thumbs in background so grid cards stay fast.
+	if strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/") ||
+		isImageFilename(filename) || isVideoFilename(filename) {
 		go func(id string) {
 			_ = s.EnsureThumb(context.Background(), id)
 		}(node.ID)
 	}
 	return node, nil
+}
+
+func (s *Services) uniqueChildName(ctx context.Context, parentID, name string) (string, error) {
+	if _, err := s.Nodes.FindChildByName(ctx, parentID, name); errors.Is(err, domain.ErrNotFound) {
+		return name, nil
+	} else if err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for i := 1; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s (%d)%s", stem, i, ext)
+		if _, err := s.Nodes.FindChildByName(ctx, parentID, candidate); errors.Is(err, domain.ErrNotFound) {
+			return candidate, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("%w: name already used", domain.ErrConflict)
 }
 
 func snapshotParts(mu *sync.Mutex, parts *[]domain.FilePart) []domain.FilePart {
@@ -398,6 +488,32 @@ func (s *Services) DownloadRange(ctx context.Context, fileID string, w io.Writer
 	if start < 0 || start > endInclusive || start >= total {
 		return domain.Node{}, fmt.Errorf("%w: invalid range", domain.ErrValidation)
 	}
+
+	// Fast path: serve from local cache (browser seeks no longer re-hit Telegram).
+	path := s.mediaCachePath(node.ID)
+	if st, err := os.Stat(path); err == nil && st.Size() == total {
+		if err := s.serveLocalRange(path, w, start, endInclusive); err != nil {
+			return domain.Node{}, err
+		}
+		return node, nil
+	}
+
+	const waitCacheMax = 80 << 20 // ~80MB — wait once so short videos/photos play reliably
+	if total > 0 && total <= waitCacheMax {
+		cached, err := s.ensureMediaCache(ctx, node, parts)
+		if err != nil {
+			return domain.Node{}, err
+		}
+		if err := s.serveLocalRange(cached, w, start, endInclusive); err != nil {
+			return domain.Node{}, err
+		}
+		return node, nil
+	}
+
+	// Large files: stream this range from Telegram now; warm disk cache in background.
+	go func(n domain.Node, p []domain.FilePart) {
+		_, _ = s.ensureMediaCache(context.Background(), n, p)
+	}(node, parts)
 
 	ranges, err := domain.MapRangeToParts(sizes, start, endInclusive)
 	if err != nil {

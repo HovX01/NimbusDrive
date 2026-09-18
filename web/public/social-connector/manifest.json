@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Nimbus Social Connector",
+  "version": "0.1.0",
+  "description": "Connect TikTok, Instagram, and Facebook browser sessions to Nimbus after an explicit Connect click.",
+  "permissions": ["cookies", "tabs"],
+  "host_permissions": [
+    "https://*.tiktok.com/*",
+    "https://*.instagram.com/*",
+    "https://*.facebook.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "http://192.168.100.49/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

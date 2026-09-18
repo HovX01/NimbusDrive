@@ -16,8 +16,17 @@ const ShortLinkUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 // CobaltUA is used when browser-like UAs get WAF'd on some hosts.
 const CobaltUA = "cobalt/nimbus (+https://github.com/imputnet/cobalt)"
 
+// MediaItem is one file from a post (photo, video, gif).
+type MediaItem struct {
+	URL       string
+	LocalPath string
+	Filename  string
+	Headers   map[string]string
+}
+
 // Media is a resolved CDN URL ready to download (Cobalt extractor result).
 // LocalPath is set when a sidecar (VidBee) already saved the file on disk.
+// Items holds every media file from multi-image/video posts when available.
 type Media struct {
 	URL       string
 	LocalPath string
@@ -25,13 +34,27 @@ type Media struct {
 	Filename  string
 	Headers   map[string]string
 	Service   string
+	Items     []MediaItem
+}
+
+// AllItems returns gallery items, or a single item from URL/LocalPath.
+func (m Media) AllItems() []MediaItem {
+	if len(m.Items) > 0 {
+		return m.Items
+	}
+	if m.URL != "" || m.LocalPath != "" {
+		return []MediaItem{{URL: m.URL, LocalPath: m.LocalPath, Filename: m.Filename, Headers: m.Headers}}
+	}
+	return nil
 }
 
 // Options control quality / mode.
 type Options struct {
-	Mode       string // video|audio
+	Mode       string // video|audio  (video = video+photos from posts)
 	MaxHeight  int
 	Cookies    string // optional Netscape cookies path
+	AuthToken  string // optional OAuth bearer for connected provider APIs
+	TempDir    string // optional resolver work dir for local download engines
 	OnProgress ProgressFunc
 }
 

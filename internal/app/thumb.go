@@ -9,6 +9,7 @@ import (
 	_ "image/gif"
 	_ "image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -27,7 +28,7 @@ func (s *Services) removeThumb(id string) {
 	_ = os.Remove(s.thumbPath(id))
 }
 
-// EnsureThumb builds a small JPEG preview on disk (S3/Drive-style CDN thumb cache).
+// EnsureThumb builds a small JPEG preview on disk (images + video posters).
 func (s *Services) EnsureThumb(ctx context.Context, id string) error {
 	path := s.thumbPath(id)
 	if st, err := os.Stat(path); err == nil && st.Size() > 0 {
@@ -40,10 +41,18 @@ func (s *Services) EnsureThumb(ctx context.Context, id string) error {
 	if node.Type != domain.NodeFile || node.Status != domain.StatusReady {
 		return domain.ErrNotFound
 	}
-	if !strings.HasPrefix(node.MimeType, "image/") && !isImageFilename(node.Name) {
+
+	switch {
+	case strings.HasPrefix(node.MimeType, "image/") || isImageFilename(node.Name):
+		return s.ensureImageThumb(ctx, id, path)
+	case strings.HasPrefix(node.MimeType, "video/") || isVideoFilename(node.Name):
+		return s.ensureVideoThumb(ctx, node, path)
+	default:
 		return domain.ErrNotFound
 	}
+}
 
+func (s *Services) ensureImageThumb(ctx context.Context, id, path string) error {
 	var raw bytes.Buffer
 	if _, err := s.Download(ctx, id, &raw); err != nil {
 		return err
@@ -52,8 +61,68 @@ func (s *Services) EnsureThumb(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("%w: decode image", domain.ErrValidation)
 	}
-	resized := resizeMax(img, thumbMax)
+	return writeThumbJPEG(path, resizeMax(img, thumbMax))
+}
 
+func (s *Services) ensureVideoThumb(ctx context.Context, node domain.Node, path string) error {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return fmt.Errorf("%w: ffmpeg not installed", domain.ErrNotConfigured)
+	}
+
+	parts, err := s.Parts.ListByFile(ctx, node.ID)
+	if err != nil {
+		return err
+	}
+	if len(parts) == 0 {
+		return domain.ErrNotFound
+	}
+
+	src, err := s.ensureMediaCache(ctx, node, parts)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp.jpg"
+	_ = os.Remove(tmp)
+
+	// Grab a frame ~1s in (or start); scale to thumb width.
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-y",
+		"-ss", "1",
+		"-i", src,
+		"-frames:v", "1",
+		"-vf", fmt.Sprintf("scale=%d:-2", thumbMax),
+		"-q:v", "4",
+		tmp,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Short clips / bad seek — retry from the start.
+		cmd = exec.CommandContext(ctx, "ffmpeg",
+			"-y",
+			"-i", src,
+			"-frames:v", "1",
+			"-vf", fmt.Sprintf("scale=%d:-2", thumbMax),
+			"-q:v", "4",
+			tmp,
+		)
+		out2, err2 := cmd.CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("ffmpeg thumb: %w (%s)", err2, truncateOut(out)+" "+truncateOut(out2))
+		}
+	}
+	if st, err := os.Stat(tmp); err != nil || st.Size() == 0 {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("ffmpeg produced empty thumb")
+	}
+	_ = os.Remove(path)
+	return os.Rename(tmp, path)
+}
+
+func writeThumbJPEG(path string, img image.Image) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -62,7 +131,7 @@ func (s *Services) EnsureThumb(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := jpeg.Encode(f, resized, &jpeg.Options{Quality: 82}); err != nil {
+	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: 82}); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
 		return err
@@ -71,7 +140,16 @@ func (s *Services) EnsureThumb(ctx context.Context, id string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	_ = os.Remove(path)
 	return os.Rename(tmp, path)
+}
+
+func truncateOut(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 200 {
+		return s[len(s)-200:]
+	}
+	return s
 }
 
 // ThumbBytes returns a cached (or freshly built) JPEG thumbnail.
@@ -116,6 +194,16 @@ func isImageFilename(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+		return true
+	default:
+		return false
+	}
+}
+
+func isVideoFilename(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".ogv":
 		return true
 	default:
 		return false

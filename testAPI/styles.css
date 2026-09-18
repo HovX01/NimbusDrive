@@ -1,0 +1,250 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: #eef2f7;
+  color: #1a1a1a;
+}
+
+header {
+  background: #1e3a5f;
+  color: #fff;
+  padding: 1.25rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+header p {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: #b8cce0;
+}
+
+.badge {
+  background: #3b82f6;
+  color: #fff;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.panel {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 2px 12px rgba(30, 58, 95, 0.08);
+}
+
+.panel-head {
+  margin-bottom: 1rem;
+}
+
+.panel-head h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.panel-head code {
+  font-size: 0.8rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.tag.get { background: #dcfce7; color: #166534; }
+.tag.post { background: #dbeafe; color: #1e40af; }
+.tag.patch { background: #fef3c7; color: #92400e; }
+.tag.delete { background: #fee2e2; color: #991b1b; }
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.filter-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filter-row input {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  min-width: 140px;
+}
+
+.student-form {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr) auto;
+  gap: 0.65rem;
+}
+
+.student-form input {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.student-form input[type="file"] {
+  grid-column: span 2;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+  background: #1e3a5f;
+  color: #fff;
+}
+
+button.ghost {
+  background: #fff;
+  color: #1e3a5f;
+  border: 1px solid #cbd5e1;
+}
+
+button.danger {
+  background: #dc2626;
+  color: #fff;
+}
+
+button.sm {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+th, td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+td.actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatar-fallback {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #dbeafe;
+  color: #1e40af;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.empty-cell {
+  text-align: center;
+  color: #64748b;
+  padding: 2rem !important;
+}
+
+.meta {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: normal;
+}
+
+.status {
+  padding: 0.85rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.status.error { background: #fee2e2; color: #991b1b; }
+.status.ok { background: #dcfce7; color: #166534; }
+
+.raw {
+  background: #0f172a;
+  color: #86efac;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow: auto;
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+  margin: 0;
+  max-height: 320px;
+}
+
+@media (max-width: 768px) {
+  .student-form {
+    grid-template-columns: 1fr;
+  }
+  .student-form input[type="file"] {
+    grid-column: span 1;
+  }
+}

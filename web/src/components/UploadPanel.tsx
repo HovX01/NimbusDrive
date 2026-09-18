@@ -94,7 +94,7 @@ export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
                     : job.status === "done"
                       ? `Saved · ${formatBytes(job.size)}`
                       : job.status === "processing"
-                        ? `Saving to cloud… · ${formatBytes(job.size)}`
+                        ? `Storing in Nimbus · ${formatBytes(job.size)}`
                         : job.status === "uploading"
                           ? `${job.progress}% · ${formatBytes(job.size)}`
                           : `Queued · ${formatBytes(job.size)}`}

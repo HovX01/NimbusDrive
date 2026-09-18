@@ -45,14 +45,15 @@ func resolveTwitter(ctx context.Context, u *url.URL, opt Options) (Media, error)
 		return Media{}, Err{Code: CodeFetchFail, Message: "bad twitter response"}
 	}
 
-	mediaURL, filename := twitterBestMedia(data, id, opt)
-	if mediaURL == "" {
+	mediaURL, filename, items := twitterAllMedia(data, id, opt)
+	if mediaURL == "" && len(items) == 0 {
 		return Media{}, Err{Code: CodeFetchEmpty, Message: "no media on this tweet"}
 	}
 	return Media{
 		URL:      mediaURL,
 		Filename: filename,
 		Headers:  map[string]string{"User-Agent": ChromeUA},
+		Items:    items,
 	}, nil
 }
 
@@ -123,10 +124,10 @@ func toBase36Float(f float64) string {
 	return out
 }
 
-func twitterBestMedia(data map[string]any, id string, opt Options) (string, string) {
-	var bestURL string
-	var bestBR int
-	var photo string
+func twitterAllMedia(data map[string]any, id string, opt Options) (string, string, []MediaItem) {
+	hdr := map[string]string{"User-Agent": ChromeUA}
+	var items []MediaItem
+	photoN, videoN := 0, 0
 
 	scan := func(list []any) {
 		for _, it := range list {
@@ -135,18 +136,24 @@ func twitterBestMedia(data map[string]any, id string, opt Options) (string, stri
 				continue
 			}
 			typ, _ := m["type"].(string)
-			if typ == "photo" || typ == "animated_gif" {
-				if photo == "" {
-					if u, ok := m["media_url_https"].(string); ok {
-						photo = u + "?name=4096x4096"
-					}
+			if typ == "photo" && opt.Mode != "audio" {
+				if u, ok := m["media_url_https"].(string); ok && u != "" {
+					photoN++
+					items = append(items, MediaItem{
+						URL:      u + "?name=4096x4096",
+						Filename: fmt.Sprintf("twitter_%s_%d.jpg", id, photoN),
+						Headers:  hdr,
+					})
 				}
+				continue
 			}
 			vi, _ := m["video_info"].(map[string]any)
 			if vi == nil {
 				continue
 			}
 			vars, _ := vi["variants"].([]any)
+			var bestURL string
+			var bestBR int
 			for _, v := range vars {
 				vm, _ := v.(map[string]any)
 				ct, _ := vm["content_type"].(string)
@@ -160,13 +167,22 @@ func twitterBestMedia(data map[string]any, id string, opt Options) (string, stri
 					bestURL = stripQueryTag(u)
 				}
 			}
+			if bestURL == "" {
+				continue
+			}
+			videoN++
+			items = append(items, MediaItem{
+				URL:      bestURL,
+				Filename: fmt.Sprintf("twitter_%s_v%d.mp4", id, videoN),
+				Headers:  hdr,
+			})
 		}
 	}
 
 	if md, ok := data["mediaDetails"].([]any); ok {
 		scan(md)
 	}
-	if bestURL == "" {
+	if len(items) == 0 {
 		if legacy, ok := data["legacy"].(map[string]any); ok {
 			if ee, ok := legacy["extended_entities"].(map[string]any); ok {
 				if md, ok := ee["media"].([]any); ok {
@@ -175,13 +191,25 @@ func twitterBestMedia(data map[string]any, id string, opt Options) (string, stri
 			}
 		}
 	}
-	if bestURL != "" {
-		return bestURL, "twitter_" + id + ".mp4"
+
+	if opt.Mode == "audio" {
+		// Audio-only: prefer first video track if any (no separate audio CDN).
+		for _, it := range items {
+			if strings.HasSuffix(strings.ToLower(it.Filename), ".mp4") {
+				return it.URL, it.Filename, []MediaItem{it}
+			}
+		}
+		return "", "", nil
 	}
-	if photo != "" && opt.Mode != "audio" {
-		return photo, "twitter_" + id + ".jpg"
+	if len(items) == 0 {
+		return "", "", nil
 	}
-	return "", ""
+	return items[0].URL, items[0].Filename, items
+}
+
+func twitterBestMedia(data map[string]any, id string, opt Options) (string, string) {
+	u, f, _ := twitterAllMedia(data, id, opt)
+	return u, f
 }
 
 func stripQueryTag(u string) string {

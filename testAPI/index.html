@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Student DB — Nimbus Data API</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Student Database</h1>
+        <p>Nimbus Data API — GET · POST · PATCH · DELETE</p>
+      </div>
+      <span class="badge">students collection</span>
+    </header>
+
+    <main>
+      <div id="status" class="status error" hidden></div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h3><span class="tag post">POST</span> Add student</h3>
+          <code>POST /api/v1/data/students</code>
+        </div>
+        <form id="student-form" class="student-form">
+          <input type="text" id="f-name" placeholder="Full name" required />
+          <input type="text" id="f-student-id" placeholder="Student ID" required />
+          <input type="email" id="f-email" placeholder="Email" required />
+          <input type="text" id="f-major" placeholder="Major" required />
+          <input type="number" id="f-gpa" placeholder="GPA" step="0.01" min="0" max="4" required />
+          <input type="file" id="f-photo" accept="image/*" />
+          <button type="submit" id="submit-btn">POST student</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head toolbar">
+          <div>
+            <h3><span class="tag get">GET</span> List students <span id="count" class="meta"></span></h3>
+            <code id="get-url">GET /api/v1/data/students</code>
+          </div>
+          <div class="filter-row">
+            <input type="text" id="filter-major" placeholder="Filter major (e.g. CS)" />
+            <input type="text" id="filter-name" placeholder="Filter name" />
+            <button type="button" id="refresh" class="ghost">GET refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Photo</th>
+                <th>Name</th>
+                <th>Student ID</th>
+                <th>Email</th>
+                <th>Major</th>
+                <th>GPA</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="table-body">
+              <tr><td colspan="7" class="empty-cell">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h3>Last API response</h3>
+          <span id="last-method" class="tag">—</span>
+        </div>
+        <pre id="raw" class="raw">{}</pre>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

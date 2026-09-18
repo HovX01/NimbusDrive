@@ -36,7 +36,7 @@ func TestNormalizeXToTwitter(t *testing.T) {
 }
 
 func TestSnapHeight(t *testing.T) {
-	cases := map[int]int{0: 480, 500: 480, 720: 720, 900: 720, 1080: 1080, 9999: 4320}
+	cases := map[int]int{0: 4320, 500: 480, 720: 720, 900: 720, 1080: 1080, 9999: 4320}
 	for in, want := range cases {
 		if got := SnapHeight(in); got != want {
 			t.Fatalf("SnapHeight(%d)=%d want %d", in, got, want)

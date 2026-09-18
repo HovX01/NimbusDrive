@@ -87,6 +87,7 @@ func (s *Services) purgeFile(ctx context.Context, id string) error {
 	}
 	_ = s.Parts.DeleteByFile(ctx, id)
 	s.removeThumb(id)
+	s.removeMediaCache(id)
 	return s.hardDeleteNode(ctx, id)
 }
 

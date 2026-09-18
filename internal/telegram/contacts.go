@@ -75,7 +75,7 @@ func (c *Client) SendFileToUser(ctx context.Context, userID int64, filename, mim
 	} else if !ok {
 		return domain.ErrNotAuthenticated
 	}
-	user, err := c.contactUser(ctx, userID)
+	user, err := c.resolvePeerUser(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -93,17 +93,38 @@ func (c *Client) SendFileToUser(ctx context.Context, userID int64, filename, mim
 		return err
 	}
 	_, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
-		Peer: &tg.InputPeerUser{UserID: user.ID, AccessHash: user.AccessHash},
-		Media: &tg.InputMediaUploadedDocument{
-			File:     file,
-			MimeType: mimeType,
-			Attributes: []tg.DocumentAttributeClass{
-				&tg.DocumentAttributeFilename{FileName: filename},
-			},
-		},
+		Peer:     &tg.InputPeerUser{UserID: user.ID, AccessHash: user.AccessHash},
+		Media:    inputMediaForSend(filename, mimeType, file, user.Bot),
 		RandomID: newRandomID(),
 	})
 	return err
+}
+
+// inputMediaForSend mirrors Telegram: people get photos/videos as native media;
+// bots get documents with filenames so tools (enhance/compress/etc.) can process them.
+func inputMediaForSend(filename, mimeType string, file tg.InputFileClass, toBot bool) tg.InputMediaClass {
+	mime := strings.ToLower(mimeType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+		mime = mimeType
+	}
+	if !toBot && strings.HasPrefix(mime, "image/") && !strings.Contains(mime, "svg") && !strings.Contains(mime, "heic") {
+		return &tg.InputMediaUploadedPhoto{File: file}
+	}
+	attrs := []tg.DocumentAttributeClass{
+		&tg.DocumentAttributeFilename{FileName: filename},
+	}
+	switch {
+	case strings.HasPrefix(mime, "video/"):
+		attrs = append(attrs, &tg.DocumentAttributeVideo{SupportsStreaming: true})
+	case strings.HasPrefix(mime, "audio/"):
+		attrs = append(attrs, &tg.DocumentAttributeAudio{})
+	}
+	return &tg.InputMediaUploadedDocument{
+		File:       file,
+		MimeType:   mimeType,
+		Attributes: attrs,
+	}
 }
 
 func (c *Client) fetchContactUsers(ctx context.Context, api *tg.Client) ([]tg.UserClass, error) {
@@ -132,6 +153,11 @@ func (c *Client) fetchContactUsers(ctx context.Context, api *tg.Client) ([]tg.Us
 }
 
 func (c *Client) contactUser(ctx context.Context, userID int64) (*tg.User, error) {
+	return c.resolvePeerUser(ctx, userID)
+}
+
+// resolvePeerUser finds a person (contacts) or bot (started dialogs) by id.
+func (c *Client) resolvePeerUser(ctx context.Context, userID int64) (*tg.User, error) {
 	c.contactsMu.Lock()
 	if user, ok := c.contactByID[userID]; ok {
 		c.contactsMu.Unlock()
@@ -144,17 +170,27 @@ func (c *Client) contactUser(ctx context.Context, userID int64) (*tg.User, error
 		return nil, err
 	}
 	users, err := c.fetchContactUsers(ctx, api)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		c.cacheContactUsers(usersFromClass(users))
 	}
-	c.cacheContactUsers(usersFromClass(users))
 	c.contactsMu.Lock()
 	user, ok := c.contactByID[userID]
 	c.contactsMu.Unlock()
 	if ok {
 		return user, nil
 	}
-	return nil, fmt.Errorf("%w: contact not found", domain.ErrNotFound)
+
+	// Bots are not in ContactsGetContacts — resolve from dialogs you've started.
+	if _, err := c.ListBots(ctx); err != nil {
+		return nil, err
+	}
+	c.contactsMu.Lock()
+	user, ok = c.contactByID[userID]
+	c.contactsMu.Unlock()
+	if ok {
+		return user, nil
+	}
+	return nil, fmt.Errorf("%w: contact or bot not found — open the chat in Telegram first", domain.ErrNotFound)
 }
 
 func usersFromClass(users []tg.UserClass) map[int64]*tg.User {

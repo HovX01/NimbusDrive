@@ -24,6 +24,8 @@ telegram_api.json
 # misc junk
 *.dump
 fetchall/
+testAPI/config.js
+testAPI/node_modules/
 
 # ide / os
 .cursor

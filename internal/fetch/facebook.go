@@ -47,6 +47,9 @@ func resolveFacebook(ctx context.Context, u *url.URL, opt Options) (Media, error
 	req.Header = chromeHeaders()
 	req.Header.Set("Sec-Fetch-Mode", "navigate")
 	req.Header.Set("Sec-Fetch-Site", "none")
+	if opt.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+opt.AuthToken)
+	}
 
 	res, err := client.Do(req)
 	if err != nil {
@@ -73,8 +76,16 @@ func resolveFacebook(ctx context.Context, u *url.URL, opt Options) (Media, error
 	return Media{
 		URL:      mediaURL,
 		Filename: name,
-		Headers:  map[string]string{"User-Agent": ChromeUA},
+		Headers:  bearerHeaders(opt.AuthToken),
 	}, nil
+}
+
+func bearerHeaders(token string) map[string]string {
+	headers := map[string]string{"User-Agent": ChromeUA}
+	if token != "" {
+		headers["Authorization"] = "Bearer " + token
+	}
+	return headers
 }
 
 func firstJSONString(m []string) string {

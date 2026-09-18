@@ -10,6 +10,7 @@ type NodeRepository interface {
 	EnsureRoot(ctx context.Context) (Node, error)
 	Get(ctx context.Context, id string) (Node, error)
 	ListChildren(ctx context.Context, parentID string) ([]Node, error)
+	ListReady(ctx context.Context, limit int) ([]Node, error)
 	Create(ctx context.Context, node Node) (Node, error)
 	UpdateStatus(ctx context.Context, id string, status NodeStatus) error
 	UpdateSize(ctx context.Context, id string, size int64) error
@@ -21,6 +22,8 @@ type NodeRepository interface {
 	ListDeletedChildren(ctx context.Context, parentID string) ([]Node, error)
 	HardDelete(ctx context.Context, id string) error
 	FindChildByName(ctx context.Context, parentID, name string) (Node, error)
+	FindByContentHash(ctx context.Context, hash string) (Node, error)
+	SetContentHash(ctx context.Context, nodeID, hash string) error
 	Search(ctx context.Context, query string, limit int) ([]SearchHit, error)
 }
 
@@ -68,6 +71,52 @@ type TelegramSetup interface {
 // TelegramMessenger lists contacts and sends files via Telegram DMs.
 type TelegramMessenger interface {
 	ListContacts(ctx context.Context, query string) ([]TelegramContact, error)
+	ListBots(ctx context.Context) ([]TelegramBot, error)
+	IsBot(ctx context.Context, userID int64) (bool, error)
 	DownloadContactAvatar(ctx context.Context, userID int64, w io.Writer) error
 	SendFileToUser(ctx context.Context, userID int64, filename, mimeType string, r io.Reader, size int64) error
+}
+
+// BotGrantRepository stores which bots the Nimbus user has allowed.
+type BotGrantRepository interface {
+	ListBotGrants(ctx context.Context) (map[int64]bool, error)
+	SetBotAllowed(ctx context.Context, botID int64, allowed bool) error
+	IsBotAllowed(ctx context.Context, botID int64) (bool, error)
+}
+
+// DataRepository stores JSON documents in named collections.
+type DataRepository interface {
+	Insert(ctx context.Context, collection string, data map[string]any) (DataRow, error)
+	GetRow(ctx context.Context, collection, id string) (DataRow, error)
+	Query(ctx context.Context, collection string, q DataQuery) ([]DataRow, error)
+	Update(ctx context.Context, collection, id string, patch map[string]any) (DataRow, error)
+	Delete(ctx context.Context, collection, id string) error
+	ListCollections(ctx context.Context) ([]string, error)
+}
+
+// EditProjectRepository persists video editor timelines.
+type EditProjectRepository interface {
+	CreateProject(ctx context.Context, p EditProject) (EditProject, error)
+	GetProject(ctx context.Context, id string) (EditProject, error)
+	GetProjectBySource(ctx context.Context, sourceNodeID string) (EditProject, error)
+	ListProjects(ctx context.Context) ([]EditProject, error)
+	UpdateTimeline(ctx context.Context, id string, timelineJSON string) error
+	DeleteProject(ctx context.Context, id string) error
+}
+
+// SocialConnectionRepository persists OAuth tokens for connected media providers.
+type SocialConnectionRepository interface {
+	ListSocialConnections(ctx context.Context) ([]SocialConnection, error)
+	GetActiveSocialConnection(ctx context.Context, provider SocialProvider) (SocialConnectionSecret, error)
+	UpsertSocialConnection(ctx context.Context, c SocialConnectionSecret) (SocialConnection, error)
+	SetSocialConnectionEnabled(ctx context.Context, provider SocialProvider, enabled bool) (SocialConnection, error)
+	SetActiveSocialConnection(ctx context.Context, provider SocialProvider, id string) (SocialConnection, error)
+	DeleteSocialConnection(ctx context.Context, provider SocialProvider, id string) error
+}
+
+// SocialOAuthConfigRepository persists provider app credentials configured from Settings.
+type SocialOAuthConfigRepository interface {
+	ListSocialOAuthConfigs(ctx context.Context) ([]SocialOAuthAppConfig, error)
+	GetSocialOAuthConfig(ctx context.Context, provider SocialProvider) (SocialOAuthAppConfig, error)
+	UpsertSocialOAuthConfig(ctx context.Context, c SocialOAuthAppConfig) (SocialOAuthAppConfig, error)
 }

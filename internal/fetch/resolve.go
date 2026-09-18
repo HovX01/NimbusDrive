@@ -26,6 +26,22 @@ func Resolve(ctx context.Context, raw string, opt Options) (Media, error) {
 
 	var m Media
 	switch service {
+	case "instagram":
+		// No native IG extractor — go straight to Cobalt when configured.
+		if cobaltAPIConfigured() {
+			m, err = resolveViaCobaltAPI(ctx, normalized, opt)
+			if err == nil {
+				m.Service = "instagram"
+				if m.Filename == "" {
+					m.Filename = "instagram.jpg"
+				}
+				return m, nil
+			}
+		}
+		err = Err{
+			Code:    CodeLinkUnsupported,
+			Message: "instagram needs Cobalt (set NIMBUS_COBALT_API) or cookies",
+		}
 	case "tiktok":
 		m, err = resolveTikTok(ctx, u, opt)
 	case "youtube":

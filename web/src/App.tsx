@@ -7,6 +7,7 @@ import {
   emptyTrash,
   fetchFromURL,
   fetchJobStatus,
+  importFileURL,
   getAccessKey,
   listFiles,
   listShares,
@@ -34,9 +35,11 @@ import { AccessKeyScreen, BootScreen, LoginScreen, SetupScreen } from "./compone
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DriveShell } from "./components/DriveShell";
 import { ShareModal } from "./components/ShareModal";
+import { SettingsModal } from "./components/SettingsModal";
 import { SendTelegramModal } from "./components/SendTelegramModal";
 import { ToastStack, type Toast, type ToastKind } from "./components/ToastStack";
 import { UploadPanel, type UploadJob } from "./components/UploadPanel";
+import { extractSharedURL, isShareTargetPath } from "./lib/shareTarget";
 
 const TOKEN_KEY = "nimbus_token";
 
@@ -73,6 +76,18 @@ export default function App() {
   const [uploads, setUploads] = useState<UploadJob[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sharedFetchUrl, setSharedFetchUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const path = window.location.pathname;
+    const shared = extractSharedURL(window.location.search);
+    if (!shared) return;
+    setSharedFetchUrl(shared);
+    if (isShareTargetPath(path) || window.location.search.includes("url=") || window.location.search.includes("text=")) {
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
 
   function pushToast(message: string, kind: ToastKind = "info") {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -317,7 +332,7 @@ export default function App() {
 
   async function onFetchURL(
     input: {
-      url: string;
+      urls: string[];
       mode: "video" | "audio";
       maxHeight: number | null;
     },
@@ -325,23 +340,75 @@ export default function App() {
   ) {
     if (!token) return;
     setError("");
-    const started = await fetchFromURL(token, parentId, {
-      url: input.url,
-      mode: input.mode,
-      max_height: input.maxHeight,
-    });
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 400));
-      const st = await fetchJobStatus(token, started.job_id);
-      onProgress?.({ progress: st.progress ?? 0, message: st.message || "" });
-      if (st.status === "done") {
-        const r = await listFiles(token, parentId);
-        setItems(r.items ?? []);
-        return;
+    const list = input.urls;
+    let saved = 0;
+    for (let i = 0; i < list.length; i++) {
+      const url = list[i];
+      const base = list.length > 1 ? (i / list.length) * 100 : 0;
+      const span = list.length > 1 ? 100 / list.length : 100;
+      onProgress?.({
+        progress: base,
+        message: list.length > 1 ? `Link ${i + 1}/${list.length}…` : "Starting…",
+      });
+      const started = await fetchFromURL(token, parentId, {
+        url,
+        mode: input.mode,
+        max_height: input.maxHeight,
+      });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 400));
+        const st = await fetchJobStatus(token, started.job_id);
+        const local = st.progress ?? 0;
+        onProgress?.({
+          progress: Math.min(99, base + (local / 100) * span),
+          message:
+            list.length > 1
+              ? `Link ${i + 1}/${list.length}: ${st.message || ""}`
+              : st.message || "",
+        });
+        if (st.status === "done") {
+          saved += st.count || st.nodes?.length || (st.node ? 1 : 0);
+          break;
+        }
+        if (st.status === "error") {
+          throw new Error(
+            list.length > 1
+              ? `Link ${i + 1}/${list.length}: ${st.message || "Fetch failed"}`
+              : st.message || "Fetch failed",
+          );
+        }
       }
-      if (st.status === "error") {
-        throw new Error(st.message || "Fetch failed");
+    }
+    const r = await listFiles(token, parentId);
+    setItems(r.items ?? []);
+    onProgress?.({ progress: 100, message: "Done" });
+    if (list.length > 1) pushToast(`Fetched ${list.length} links (${saved} files)`, "success");
+    else if (saved > 1) pushToast(`Saved ${saved} files to Drive`, "success");
+    else pushToast("Saved to Drive", "success");
+  }
+
+  async function onImportURL(urls: string[]) {
+    if (!token) return;
+    setError("");
+    setBusy(true);
+    try {
+      let lastName = "";
+      for (const url of urls) {
+        const file = await importFileURL(token, parentId, url);
+        lastName = file.name;
+        if (file.duplicate) {
+          pushToast(`${file.name} already in Drive`, "info");
+        }
       }
+      const r = await listFiles(token, parentId);
+      setItems(r.items ?? []);
+      if (urls.length > 1) pushToast(`Imported ${urls.length} files`, "success");
+      else if (lastName) pushToast(`Imported ${lastName}`, "success");
+    } catch (e) {
+      setError((e as Error).message);
+      throw e;
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -380,7 +447,7 @@ export default function App() {
         const job = jobs[i];
         patchUpload(job.id, { status: "uploading", progress: 0 });
         try {
-          await uploadFile(
+          const node = await uploadFile(
             token!,
             parentId,
             file,
@@ -388,7 +455,8 @@ export default function App() {
             () => patchUpload(job.id, { progress: 100, status: "processing" }),
           );
           patchUpload(job.id, { status: "done", progress: 100 });
-          pushToast(`Uploaded ${file.name}`, "success");
+          if (node.duplicate) pushToast(`${file.name} already in Drive`, "info");
+          else pushToast(`Uploaded ${file.name}`, "success");
           const r = await listFiles(token!, parentId);
           setItems(r.items ?? []);
         } catch (e) {
@@ -568,22 +636,18 @@ export default function App() {
     }
   }
 
-  async function onCreateShare() {
-    if (!token || !shareTarget) return;
+  async function onCreateShare(): Promise<ShareInfo | null> {
+    if (!token || !shareTarget) return null;
     setShareBusy(true);
     try {
       const created = await createShare(token, shareTarget.id);
       const r = await listShares(token, shareTarget.id);
       setShares(r.items ?? []);
-      try {
-        await navigator.clipboard.writeText(created.url);
-        pushToast("Share link copied to clipboard", "success");
-      } catch {
-        pushToast("Share link created", "success");
-      }
+      return created;
     } catch (e) {
       setError((e as Error).message);
       pushToast((e as Error).message, "error");
+      return null;
     } finally {
       setShareBusy(false);
     }
@@ -721,6 +785,8 @@ export default function App() {
         onNavigate={navigate}
         onMkdir={onMkdir}
         onFetchURL={onFetchURL}
+        onImportURL={onImportURL}
+        onOpenSettings={() => setSettingsOpen(true)}
         onUpload={onUpload}
         onDownload={onDownload}
         onRename={onRename}
@@ -731,8 +797,19 @@ export default function App() {
         onEmptyTrash={onEmptyTrash}
         onShare={openShare}
         onSendTelegram={openSendTelegram}
+        onRefresh={async () => {
+          if (!token) return;
+          try {
+            const r = await listFiles(token, parentId);
+            setItems(r.items ?? []);
+          } catch (e) {
+            setError((e as Error).message);
+          }
+        }}
         onLogout={onLogout}
         onClearError={() => setError("")}
+        sharedFetchUrl={sharedFetchUrl}
+        onSharedFetchConsumed={() => setSharedFetchUrl(null)}
       />
       {sendTarget && (
         <SendTelegramModal
@@ -746,6 +823,9 @@ export default function App() {
           }}
           onSend={onSendTelegram}
         />
+      )}
+      {settingsOpen && token && (
+        <SettingsModal token={token} onClose={() => setSettingsOpen(false)} />
       )}
       {shareTarget && (
         <ShareModal

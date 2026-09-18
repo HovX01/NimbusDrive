@@ -15,15 +15,22 @@ import (
 type Config struct {
 	Port            string
 	DataDir         string
+	WebDir          string
 	DatabaseURL     string
 	JWTSecret       string
 	AccessSecret    string
+	APIKey          string
 	Public          bool
 	JWTTTLHours     int
 	TelegramAPIID   int
 	TelegramAPIHash string
 	ChunkSize       int
 	CORSOrigins     []string
+	PublicBaseURL   string
+	TikTokClientKey string
+	TikTokSecret    string
+	MetaAppID       string
+	MetaAppSecret   string
 }
 
 func Load() (Config, error) {
@@ -32,14 +39,21 @@ func Load() (Config, error) {
 	cfg := Config{
 		Port:            getenv("PORT", "8080"),
 		DataDir:         getenv("DATA_DIR", "./data"),
+		WebDir:          strings.TrimSpace(os.Getenv("WEB_DIR")),
 		DatabaseURL:     getenv("DATABASE_URL", "sqlite://./data/nimbus.db"),
 		JWTSecret:       os.Getenv("JWT_SECRET"),
 		AccessSecret:    strings.TrimSpace(os.Getenv("NIMBUS_ACCESS_SECRET")),
+		APIKey:          strings.TrimSpace(os.Getenv("NIMBUS_API_KEY")),
 		Public:          getenvBool("NIMBUS_PUBLIC", false),
 		JWTTTLHours:     getenvInt("JWT_TTL_HOURS", 72),
 		TelegramAPIHash: strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
 		ChunkSize:       getenvInt("CHUNK_SIZE", 8*1024*1024),
 		CORSOrigins:     splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
+		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("NIMBUS_PUBLIC_BASE_URL")), "/"),
+		TikTokClientKey: strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_KEY")),
+		TikTokSecret:    strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_SECRET")),
+		MetaAppID:       strings.TrimSpace(os.Getenv("META_APP_ID")),
+		MetaAppSecret:   strings.TrimSpace(os.Getenv("META_APP_SECRET")),
 	}
 
 	if id := strings.TrimSpace(os.Getenv("TELEGRAM_API_ID")); id != "" {
@@ -70,6 +84,15 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.AccessSecret = secret
+	}
+
+	// API key for programmatic upload/import/download (Cloudinary-style dev API).
+	if cfg.APIKey == "" {
+		secret, err := loadOrCreateSecretFile(cfg.DataDir, "api.key")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.APIKey = secret
 	}
 
 	if cfg.ChunkSize < 64*1024 {

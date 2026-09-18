@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.22-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
@@ -15,11 +15,14 @@ COPY web/ .
 RUN npm run build
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates wget ffmpeg python3 py3-pip \
+  && python3 -m pip install --no-cache-dir --break-system-packages --upgrade yt-dlp
 WORKDIR /app
 COPY --from=build /nimbus /app/nimbus
 COPY --from=web /web/dist /app/web
+COPY docs /app/docs
 ENV DATA_DIR=/data
+ENV WEB_DIR=/app/web
 ENV PORT=8080
 EXPOSE 8080
 VOLUME ["/data"]

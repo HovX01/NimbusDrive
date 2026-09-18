@@ -52,9 +52,12 @@ func resolveTikTok(ctx context.Context, u *url.URL, opt Options) (Media, error) 
 		"Referer":    "https://www.tiktok.com/",
 		"Cookie":     jarCookies,
 	}
+	if opt.AuthToken != "" {
+		headers["Authorization"] = "Bearer " + opt.AuthToken
+	}
 
 	// Photo slideshow (e.g. vt.tiktok.com → /@user/photo/…)
-	if imgURL := firstTikTokImage(detail); imgURL != "" && (isPhoto || playAddrOf(detail) == "") {
+	if imgs := allTikTokImages(detail); len(imgs) > 0 && (isPhoto || playAddrOf(detail) == "") {
 		if opt.Mode == "audio" {
 			if music := musicURL(detail); music != "" {
 				return Media{
@@ -65,10 +68,19 @@ func resolveTikTok(ctx context.Context, u *url.URL, opt Options) (Media, error) 
 			}
 			return Media{}, Err{Code: CodeFetchEmpty, Message: "this TikTok photo has no audio track"}
 		}
+		items := make([]MediaItem, 0, len(imgs))
+		for i, imgURL := range imgs {
+			items = append(items, MediaItem{
+				URL:      imgURL,
+				Filename: fmt.Sprintf("tiktok_%s_%s_%d.jpg", unique, postID, i+1),
+				Headers:  headers,
+			})
+		}
 		return Media{
-			URL:      imgURL,
-			Filename: fmt.Sprintf("tiktok_%s_%s.jpg", unique, postID),
+			URL:      items[0].URL,
+			Filename: items[0].Filename,
 			Headers:  headers,
+			Items:    items,
 		}, nil
 	}
 
@@ -103,6 +115,9 @@ func fetchTikTokDetail(ctx context.Context, client *http.Client, pageURL string,
 		req.Header.Set("User-Agent", ua)
 		if ua == CobaltUA {
 			req.Header.Set("Accept", "*/*")
+		}
+		if opt.AuthToken != "" {
+			req.Header.Set("Authorization", "Bearer "+opt.AuthToken)
 		}
 		_ = opt // cookies path reserved for future Netscape jar load
 
@@ -157,11 +172,20 @@ func musicURL(detail map[string]any) string {
 }
 
 func firstTikTokImage(detail map[string]any) string {
-	imagePost, _ := detail["imagePost"].(map[string]any)
-	if imagePost == nil {
+	imgs := allTikTokImages(detail)
+	if len(imgs) == 0 {
 		return ""
 	}
+	return imgs[0]
+}
+
+func allTikTokImages(detail map[string]any) []string {
+	imagePost, _ := detail["imagePost"].(map[string]any)
+	if imagePost == nil {
+		return nil
+	}
 	images, _ := imagePost["images"].([]any)
+	var out []string
 	for _, it := range images {
 		m, _ := it.(map[string]any)
 		if m == nil {
@@ -173,23 +197,28 @@ func firstTikTokImage(detail map[string]any) string {
 		}
 		list, _ := imageURL["urlList"].([]any)
 		var fallback string
+		picked := ""
 		for _, u := range list {
 			s, _ := u.(string)
 			if s == "" {
 				continue
 			}
 			if strings.Contains(s, ".jpeg") || strings.Contains(s, ".jpg") || strings.Contains(s, ".webp") {
-				return s
+				picked = s
+				break
 			}
 			if fallback == "" {
 				fallback = s
 			}
 		}
-		if fallback != "" {
-			return fallback
+		if picked == "" {
+			picked = fallback
+		}
+		if picked != "" {
+			out = append(out, picked)
 		}
 	}
-	return ""
+	return out
 }
 
 func extractTikTokID(u *url.URL) string {

@@ -8,6 +8,8 @@ import { PreviewModal } from "./PreviewModal";
 import { NoteModal } from "./NoteModal";
 import { FetchModal } from "./FetchModal";
 import { MoveModal } from "./MoveModal";
+import { MediaStudioModal } from "./MediaStudioModal";
+import { VideoEditor } from "./editor/VideoEditor";
 import { UserBadge } from "./UserBadge";
 import { isFileDrag, isNodeDrag, readNodeDragData, setNodeDragData } from "../lib/drag";
 
@@ -32,9 +34,11 @@ type Props = {
   onNavigate: (crumbs: Crumb[]) => void;
   onMkdir: () => void;
   onFetchURL: (
-    input: { url: string; mode: "video" | "audio"; maxHeight: number | null },
+    input: { urls: string[]; mode: "video" | "audio"; maxHeight: number | null },
     onProgress?: (p: { progress: number; message: string }) => void,
   ) => Promise<void>;
+  onImportURL: (urls: string[]) => Promise<void>;
+  onOpenSettings: () => void;
   onUpload: (files: FileList | File[]) => void;
   onDownload: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -45,8 +49,12 @@ type Props = {
   onEmptyTrash: () => void;
   onShare: (id: string, name: string) => void;
   onSendTelegram: (id: string, name: string) => void;
+  onRefresh: () => void | Promise<void>;
   onLogout: () => void;
   onClearError: () => void;
+  /** Prefill Fetch when shared from another app (X, etc.). */
+  sharedFetchUrl?: string | null;
+  onSharedFetchConsumed?: () => void;
 };
 
 function locationLabel(path: Crumb[]): string {
@@ -74,6 +82,8 @@ export function DriveShell(props: Props) {
     onNavigate,
     onMkdir,
     onFetchURL,
+    onImportURL,
+    onOpenSettings,
     onUpload,
     onDownload,
     onRename,
@@ -84,8 +94,11 @@ export function DriveShell(props: Props) {
     onEmptyTrash,
     onShare,
     onSendTelegram,
+    onRefresh,
     onLogout,
     onClearError,
+    sharedFetchUrl,
+    onSharedFetchConsumed,
   } = props;
   const trashMode = section === "trash";
 
@@ -99,7 +112,21 @@ export function DriveShell(props: Props) {
   const [fetchBusy, setFetchBusy] = useState(false);
   const [fetchProgress, setFetchProgress] = useState(0);
   const [fetchMessage, setFetchMessage] = useState("");
+  const [dockSheet, setDockSheet] = useState<null | "create" | "more">(null);
+  const [dockHidden, setDockHidden] = useState(false);
+  const [mediaNode, setMediaNode] = useState<Node | null>(null);
+  const [editVideoNode, setEditVideoNode] = useState<Node | null>(null);
+  const [pendingFetchUrl, setPendingFetchUrl] = useState("");
+  const lastScrollY = useRef(0);
   const searchingMode = query.trim().length >= 2;
+
+  useEffect(() => {
+    if (!sharedFetchUrl?.trim()) return;
+    setPendingFetchUrl(sharedFetchUrl.trim());
+    setFetchOpen(true);
+    setDockSheet(null);
+    onSharedFetchConsumed?.();
+  }, [sharedFetchUrl, onSharedFetchConsumed]);
   const [dragOver, setDragOver] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -132,6 +159,40 @@ export function DriveShell(props: Props) {
   useEffect(() => {
     setSelected(new Set());
   }, [trail]);
+
+  useEffect(() => {
+    if (!dockSheet) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDockSheet(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dockSheet]);
+
+  useEffect(() => {
+    if (dockSheet) setDockHidden(false);
+  }, [dockSheet]);
+
+  useEffect(() => {
+    lastScrollY.current = window.scrollY || document.documentElement.scrollTop || 0;
+    const onScroll = () => {
+      const y = window.scrollY || document.documentElement.scrollTop || 0;
+      const delta = y - lastScrollY.current;
+      lastScrollY.current = y;
+      if (dockSheet) {
+        setDockHidden(false);
+        return;
+      }
+      if (y < 40) {
+        setDockHidden(false);
+        return;
+      }
+      if (delta > 10) setDockHidden(true);
+      else if (delta < -10) setDockHidden(false);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [dockSheet]);
 
   useEffect(() => {
     const q = query.trim();
@@ -319,11 +380,15 @@ export function DriveShell(props: Props) {
           <BrandMark />
           <button
             type="button"
-            className="icon-btn mobile-only"
+            className="icon-btn menu-toggle open mobile-only"
             aria-label="Close menu"
             onClick={() => setMenuOpen(false)}
           >
-            <i className="fa-solid fa-xmark" />
+            <span className="menu-toggle-icon" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
           </button>
         </div>
         <nav className="side-nav">
@@ -354,6 +419,17 @@ export function DriveShell(props: Props) {
             <i className="fa-solid fa-trash" />
             <span>Trash</span>
           </button>
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => {
+              onOpenSettings();
+              setMenuOpen(false);
+            }}
+          >
+            <i className="fa-solid fa-code" />
+            <span>Storage API</span>
+          </button>
         </nav>
         <div className="side-foot">
           <UserBadge token={token} user={user} />
@@ -375,11 +451,16 @@ export function DriveShell(props: Props) {
         <header className="topbar">
           <button
             type="button"
-            className="icon-btn mobile-only"
-            aria-label="Open menu"
-            onClick={() => setMenuOpen(true)}
+            className={`icon-btn menu-toggle mobile-only ${menuOpen ? "open" : ""}`}
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((o) => !o)}
           >
-            <i className="fa-solid fa-bars" />
+            <span className="menu-toggle-icon" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
           </button>
           <div className="search-wrap">
             <label className="sr-only" htmlFor="drive-search">
@@ -633,6 +714,8 @@ export function DriveShell(props: Props) {
                     onPurge={() => onPurge(n.id)}
                     onShare={() => onShare(n.id, n.name)}
                     onSendTelegram={() => onSendTelegram(n.id, n.name)}
+                    onMediaStudio={() => setMediaNode(n)}
+                    onEditVideo={() => setEditVideoNode(n)}
                     onDragMove={(ids) => void dragMove(ids, n.id)}
                   />
                 </li>
@@ -736,6 +819,16 @@ export function DriveShell(props: Props) {
                                 </button>
                               )}
                               {n.type === "file" && (
+                                <button type="button" className="card-action" title="Media Studio" onClick={() => setMediaNode(n)}>
+                                  <i className="fa-solid fa-film" />
+                                </button>
+                              )}
+                              {(kind === "video" || kind === "image") && (
+                                <button type="button" className="card-action" title="Edit Media" onClick={() => setEditVideoNode(n)}>
+                                  <i className="fa-solid fa-scissors" />
+                                </button>
+                              )}
+                              {n.type === "file" && (
                                 <button type="button" className="card-action" title="Share" onClick={() => onShare(n.id, n.name)}>
                                   <i className="fa-solid fa-link" />
                                 </button>
@@ -763,39 +856,173 @@ export function DriveShell(props: Props) {
         </section>
       </div>
 
-      <nav className="mobile-dock mobile-only" aria-label="Quick actions">
-        <button type="button" onClick={() => onCrumb(0)}>
-          <i className="fa-solid fa-hard-drive" />
+      <nav
+        className={`mobile-dock mobile-only${dockHidden && !dockSheet ? " dock-hidden" : ""}`}
+        aria-label="Quick actions"
+        aria-hidden={dockHidden && !dockSheet ? true : undefined}
+      >
+        <button
+          type="button"
+          className={section === "drive" && !dockSheet ? "dock-active" : ""}
+          aria-current={section === "drive" && !dockSheet ? "page" : undefined}
+          onClick={() => {
+            setDockSheet(null);
+            onSectionChange("drive");
+            onCrumb(0);
+            setQuery("");
+            setHits(null);
+          }}
+        >
+          <i className="fa-solid fa-hard-drive" aria-hidden />
           <span>Drive</span>
         </button>
-        <button type="button" onClick={() => onSectionChange("trash")}>
-          <i className="fa-solid fa-trash" />
-          <span>Trash</span>
+
+        <button
+          type="button"
+          className={`dock-fab ${dockSheet === "create" ? "open" : ""}`}
+          aria-label="Create"
+          aria-expanded={dockSheet === "create"}
+          onClick={() => setDockSheet((s) => (s === "create" ? null : "create"))}
+        >
+          <i className={`fa-solid ${dockSheet === "create" ? "fa-xmark" : "fa-plus"}`} aria-hidden />
+          <span>Create</span>
         </button>
-        <button type="button" onClick={onMkdir}>
-          <i className="fa-solid fa-folder-plus" />
-          <span>Folder</span>
-        </button>
-        <button type="button" onClick={() => setNoteOpen(true)}>
-          <i className="fa-solid fa-note-sticky" />
-          <span>Note</span>
-        </button>
-        <button type="button" onClick={() => setFetchOpen(true)}>
-          <i className="fa-solid fa-cloud-arrow-down" />
-          <span>Fetch</span>
-        </button>
-        <button type="button" className="dock-primary" onClick={() => fileInput.current?.click()}>
-          <svg height={22} width={22} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-            <path d="M0 0h24v24H0z" fill="none" />
-            <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" fill="currentColor" />
-          </svg>
-          <span>Upload</span>
-        </button>
-        <button type="button" onClick={onLogout}>
-          <i className="fa-solid fa-right-from-bracket" />
-          <span>Out</span>
+
+        <button
+          type="button"
+          className={section === "trash" || dockSheet === "more" ? "dock-active" : ""}
+          aria-expanded={dockSheet === "more"}
+          onClick={() => setDockSheet((s) => (s === "more" ? null : "more"))}
+        >
+          <i className="fa-solid fa-ellipsis" aria-hidden />
+          <span>More</span>
         </button>
       </nav>
+
+      {dockSheet && (
+        <div className="dock-sheet-layer mobile-only">
+          <button
+            type="button"
+            className="dock-sheet-scrim"
+            aria-label="Close menu"
+            onClick={() => setDockSheet(null)}
+          />
+          <div
+            className="dock-sheet"
+            role="menu"
+            aria-label={dockSheet === "create" ? "Create" : "More"}
+          >
+            {dockSheet === "create" ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    fileInput.current?.click();
+                    setDockSheet(null);
+                  }}
+                >
+                  <i className="fa-solid fa-cloud-arrow-up" aria-hidden />
+                  <span>
+                    <strong>Upload</strong>
+                    <small>Photos, videos, files</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setDockSheet(null);
+                    onMkdir();
+                  }}
+                >
+                  <i className="fa-solid fa-folder-plus" aria-hidden />
+                  <span>
+                    <strong>New folder</strong>
+                    <small>Organize your drive</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setDockSheet(null);
+                    setNoteOpen(true);
+                  }}
+                >
+                  <i className="fa-solid fa-note-sticky" aria-hidden />
+                  <span>
+                    <strong>Note</strong>
+                    <small>Quick text file</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setDockSheet(null);
+                    setFetchOpen(true);
+                  }}
+                >
+                  <i className="fa-solid fa-cloud-arrow-down" aria-hidden />
+                  <span>
+                    <strong>Fetch link</strong>
+                    <small>Photos & video from the web</small>
+                  </span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setDockSheet(null);
+                    onSectionChange("trash");
+                    setQuery("");
+                    setHits(null);
+                  }}
+                >
+                  <i className="fa-solid fa-trash" aria-hidden />
+                  <span>
+                    <strong>Trash</strong>
+                    <small>Deleted files</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setDockSheet(null);
+                    onOpenSettings();
+                  }}
+                >
+                  <i className="fa-solid fa-gear" aria-hidden />
+                  <span>
+                    <strong>Settings</strong>
+                    <small>Storage API &amp; key</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="danger"
+                  onClick={() => {
+                    setDockSheet(null);
+                    onLogout();
+                  }}
+                >
+                  <i className="fa-solid fa-right-from-bracket" aria-hidden />
+                  <span>
+                    <strong>Sign out</strong>
+                    <small>End this session</small>
+                  </span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {moveIds && (
         <MoveModal
@@ -825,8 +1052,12 @@ export function DriveShell(props: Props) {
           busy={fetchBusy}
           progress={fetchProgress}
           message={fetchMessage}
+          initialUrl={pendingFetchUrl}
           onClose={() => {
-            if (!fetchBusy) setFetchOpen(false);
+            if (!fetchBusy) {
+              setFetchOpen(false);
+              setPendingFetchUrl("");
+            }
           }}
           onFetch={async (input) => {
             setFetchBusy(true);
@@ -837,6 +1068,19 @@ export function DriveShell(props: Props) {
                 setFetchProgress(progress);
                 setFetchMessage(message);
               });
+              setFetchOpen(false);
+            } catch (e) {
+              setFetchMessage((e as Error).message);
+            } finally {
+              setFetchBusy(false);
+            }
+          }}
+          onImport={async (importUrl) => {
+            setFetchBusy(true);
+            setFetchProgress(0);
+            setFetchMessage("Importing…");
+            try {
+              await onImportURL(importUrl);
               setFetchOpen(false);
             } catch (e) {
               setFetchMessage((e as Error).message);
@@ -859,9 +1103,41 @@ export function DriveShell(props: Props) {
           onRename={() => onRename(preview.id, preview.name)}
           onShare={() => onShare(preview.id, preview.name)}
           onSendTelegram={() => onSendTelegram(preview.id, preview.name)}
+          onMediaStudio={() => {
+            setMediaNode(preview);
+            setPreview(null);
+          }}
+          onEditVideo={() => {
+            setEditVideoNode(preview);
+            setPreview(null);
+          }}
           onDelete={() => {
             onDelete(preview.id);
             setPreview(null);
+          }}
+        />
+      )}
+
+      {mediaNode && (
+        <MediaStudioModal
+          token={token}
+          node={mediaNode}
+          busy={busy}
+          onClose={() => setMediaNode(null)}
+          onDone={() => {
+            void onRefresh();
+          }}
+        />
+      )}
+
+      {editVideoNode && (
+        <VideoEditor
+          token={token}
+          node={editVideoNode}
+          onClose={() => setEditVideoNode(null)}
+          onDone={() => {
+            setEditVideoNode(null);
+            void onRefresh();
           }}
         />
       )}

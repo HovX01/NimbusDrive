@@ -34,6 +34,9 @@ func (s *Services) SendToTelegram(ctx context.Context, fileID string, userID int
 	if userID <= 0 {
 		return fmt.Errorf("%w: user_id required", domain.ErrValidation)
 	}
+	if err := s.requireBotAllowed(ctx, userID); err != nil {
+		return err
+	}
 
 	node, err := s.Nodes.Get(ctx, fileID)
 	if err != nil {
