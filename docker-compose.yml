@@ -5,6 +5,8 @@ services:
       - "${PORT:-8080}:8080"
     env_file: .env
     volumes:
+      # Persistent application state: Telegram session, SQLite database, secrets,
+      # thumbnails, caches, and temporary job data.
       - nimbus-data:/data
     environment:
       DATA_DIR: /data
@@ -13,3 +15,4 @@ services:
 
 volumes:
   nimbus-data:
+    name: nimbus-data

@@ -18,6 +18,8 @@ services:
       # Cobalt on the same Docker network (fallback for Instagram / TikTok WAF / galleries)
       NIMBUS_COBALT_API: http://cobalt:9000
     volumes:
+      # Persistent application state: Telegram session, SQLite database, secrets,
+      # thumbnails, caches, and temporary job data.
       - nimbus-data:/data
     depends_on:
       - cobalt
@@ -59,3 +61,5 @@ networks:
 
 volumes:
   nimbus-data:
+    # Stable host-wide volume name so Compose project names cannot create a new volume.
+    name: nimbus-data
