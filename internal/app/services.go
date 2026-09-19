@@ -18,6 +18,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/vrc/nimbus/internal/backup"
 	"github.com/vrc/nimbus/internal/domain"
 	"golang.org/x/sync/errgroup"
 )
@@ -41,6 +42,7 @@ type Services struct {
 	DataDir   string
 	// UploadWorkers caps parallel Telegram part uploads (enterprise-style pipeline).
 	UploadWorkers int
+	Backup        *backup.Service
 
 	fetchOnce sync.Once
 	fetchJobs *fetchHub

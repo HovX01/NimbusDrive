@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vrc/nimbus/internal/app"
+	"github.com/vrc/nimbus/internal/backup"
 	"github.com/vrc/nimbus/internal/config"
 	httpserver "github.com/vrc/nimbus/internal/http"
 	"github.com/vrc/nimbus/internal/store/sqlite"
@@ -71,8 +72,10 @@ func main() {
 		JWTTTL:        time.Duration(cfg.JWTTTLHours) * time.Hour,
 		ChunkSize:     cfg.ChunkSize,
 		DataDir:       cfg.DataDir,
-		UploadWorkers: 3,
+UploadWorkers: 3,
 	}
+	backupSvc := backup.NewService(cfg.DataDir, store, svc, store)
+	svc.Backup = backupSvc
 	svc.ConfigureSocialOAuth(app.SocialOAuthConfig{
 		PublicBaseURL:   cfg.PublicBaseURL,
 		TikTokClientKey: cfg.TikTokClientKey,

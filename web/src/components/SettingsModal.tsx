@@ -3,6 +3,11 @@ import {
   addSocialCookieConnection,
   disconnectSocialConnection,
   fetchStorageSettings,
+  fetchBackupSettings,
+  saveBackupSettings,
+  testBackupSettings,
+  startBackup,
+  type BackupSettings,
   listBots,
   listSocialConnections,
   setBotAllowed,
@@ -36,6 +41,19 @@ export function SettingsModal({ token, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+const [backupEndpoint, setBackupEndpoint] = useState("");
+  const [backupBucket, setBackupBucket] = useState("");
+  const [backupRegion, setBackupRegion] = useState("us-east-1");
+  const [backupPrefix, setBackupPrefix] = useState("");
+  const [backupAccessKeyId, setBackupAccessKeyId] = useState("");
+  const [backupSecretKey, setBackupSecretKey] = useState("");
+  const [backupEnabled, setBackupEnabled] = useState(false);
+  const [backupUseSsl, setBackupUseSsl] = useState(true);
+  const [backupPathStyle, setBackupPathStyle] = useState(false);
+  const [backupCredentialsConfigured, setBackupCredentialsConfigured] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState("");
+  const [backupError, setBackupError] = useState("");
   const connectorTimeout = useRef<number | null>(null);
 
   async function refreshSocial() {
@@ -60,6 +78,22 @@ export function SettingsModal({ token, onClose }: Props) {
     return () => {
       cancelled = true;
     };
+  }, [token]);
+
+useEffect(() => {
+    fetchBackupSettings(token)
+      .then((s) => {
+        setBackupEndpoint(s.endpoint);
+        setBackupBucket(s.bucket);
+        setBackupRegion(s.region);
+        setBackupPrefix(s.prefix);
+        setBackupAccessKeyId(s.access_key_id_hint || "");
+        setBackupEnabled(s.enabled);
+        setBackupUseSsl(s.use_ssl);
+        setBackupPathStyle(s.path_style);
+        setBackupCredentialsConfigured(s.credentials_configured);
+      })
+      .catch((e) => setBackupError((e as Error).message));
   }, [token]);
 
   useEffect(() => {
@@ -236,6 +270,60 @@ export function SettingsModal({ token, onClose }: Props) {
     }
   }
 
+async function handleSaveBackup() {
+    setBackupBusy(true);
+    setBackupError("");
+    setBackupMessage("");
+    try {
+      await saveBackupSettings(token, {
+        enabled: backupEnabled,
+        endpoint: backupEndpoint,
+        region: backupRegion,
+        bucket: backupBucket,
+        prefix: backupPrefix,
+        access_key_id: backupAccessKeyId,
+        secret_key: backupSecretKey,
+        use_ssl: backupUseSsl,
+        path_style: backupPathStyle,
+      });
+      setBackupSecretKey("");
+      setBackupCredentialsConfigured(true);
+      setBackupMessage("Backup settings saved.");
+    } catch (e) {
+      setBackupError((e as Error).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function handleTestBackup() {
+    setBackupBusy(true);
+    setBackupError("");
+    setBackupMessage("");
+    try {
+      const result = await testBackupSettings(token);
+      setBackupMessage(result.message || "Connection successful");
+    } catch (e) {
+      setBackupError((e as Error).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function handleRunBackup() {
+    setBackupBusy(true);
+    setBackupError("");
+    setBackupMessage("");
+    try {
+      const result = await startBackup(token, "database");
+      setBackupMessage(`Backup started: ${result.job_id}`);
+    } catch (e) {
+      setBackupError((e as Error).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   function updateCookieForm(provider: SocialProvider, patch: Partial<{ displayName: string; file: File | null }>) {
     setCookieForms((prev) => {
       const nextForm = prev[provider] ?? { displayName: "", file: null };
@@ -343,6 +431,47 @@ export function SettingsModal({ token, onClose }: Props) {
                   </p>
                 </>
               )}
+            </section>
+
+                        <section className="settings-section">
+              <h3>S3 Backup</h3>
+              <p className="meta">Configure S3-compatible storage for database backups.</p>
+              {backupError && <p className="error-text">{backupError}</p>}
+              {backupMessage && <p className="meta">{backupMessage}</p>}
+              <label>
+                Endpoint
+                <input value={backupEndpoint} onChange={(e) => setBackupEndpoint(e.target.value)} placeholder="s3.amazonaws.com" />
+              </label>
+              <label>
+                Bucket
+                <input value={backupBucket} onChange={(e) => setBackupBucket(e.target.value)} />
+              </label>
+              <label>
+                Region
+                <input value={backupRegion} onChange={(e) => setBackupRegion(e.target.value)} />
+              </label>
+              <label>
+                Prefix
+                <input value={backupPrefix} onChange={(e) => setBackupPrefix(e.target.value)} placeholder="nimbus-backups/" />
+              </label>
+              <label>
+                Access Key ID
+                <input value={backupAccessKeyId} onChange={(e) => setBackupAccessKeyId(e.target.value)} />
+              </label>
+              <label>
+                Secret Key
+                <input type="password" autoComplete="new-password" placeholder={backupCredentialsConfigured ? "Unchanged" : "Required"} value={backupSecretKey} onChange={(e) => setBackupSecretKey(e.target.value)} />
+              </label>
+              <div className="row gap">
+                <label className="row gap"><input type="checkbox" checked={backupEnabled} onChange={(e) => setBackupEnabled(e.target.checked)} /> Enabled</label>
+                <label className="row gap"><input type="checkbox" checked={backupUseSsl} onChange={(e) => setBackupUseSsl(e.target.checked)} /> Use SSL</label>
+                <label className="row gap"><input type="checkbox" checked={backupPathStyle} onChange={(e) => setBackupPathStyle(e.target.checked)} /> Path-style</label>
+              </div>
+              <div className="row gap">
+                <button type="button" className="btn" disabled={backupBusy} onClick={() => void handleSaveBackup()}>Save</button>
+                <button type="button" className="btn ghost" disabled={backupBusy || (!backupCredentialsConfigured && !backupSecretKey)} onClick={() => void handleTestBackup()}>Test Connection</button>
+                <button type="button" className="btn ghost" disabled={backupBusy || !backupEnabled} onClick={() => void handleRunBackup()}>Run Database Backup</button>
+              </div>
             </section>
 
             <section className="settings-section">

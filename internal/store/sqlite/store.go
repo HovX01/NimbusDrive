@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"fmt"
 	"strings"
 	"time"
@@ -38,6 +40,13 @@ func Open(databaseURL string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+func (s *Store) SnapshotToFile(ctx context.Context, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, "VACUUM INTO ?", path)
+	return err
+}
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS nodes (

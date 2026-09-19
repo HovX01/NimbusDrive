@@ -347,6 +347,74 @@ export async function fetchStorageSettings(token: string) {
   );
 }
 
+export type BackupSettings = {
+  enabled: boolean;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  use_ssl: boolean;
+  path_style: boolean;
+  credentials_configured: boolean;
+  access_key_id_hint?: string;
+};
+
+export async function fetchBackupSettings(token: string) {
+  return parse<BackupSettings>(
+    await fetch(`${API}/api/v1/settings/backup`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function saveBackupSettings(
+  token: string,
+  body: {
+    enabled: boolean;
+    endpoint: string;
+    region: string;
+    bucket: string;
+    prefix: string;
+    access_key_id: string;
+    secret_key: string;
+    use_ssl: boolean;
+    path_style: boolean;
+  },
+) {
+  return parse<{ status: string }>(
+    await fetch(`${API}/api/v1/settings/backup`, {
+      method: "PUT",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function testBackupSettings(token: string) {
+  return parse<{ ok: boolean; message: string }>(
+    await fetch(`${API}/api/v1/settings/backup/test`, {
+      method: "POST",
+      headers: authHeaders(token),
+    }),
+  );
+}
+
+export async function startBackup(token: string, type: string) {
+  return parse<{ job_id: string; status: string }>(
+    await fetch(`${API}/api/v1/backups`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ type }),
+    }),
+  );
+}
+
+export async function backupStatus(token: string, jobId: string) {
+  return parse<{ status: string; progress: number; message: string }>(
+    await fetch(`${API}/api/v1/backups/${encodeURIComponent(jobId)}`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
 export type TelegramBot = {
   id: number;
   username?: string;

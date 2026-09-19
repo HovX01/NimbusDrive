@@ -144,8 +144,13 @@ func (s *Server) Router() http.Handler {
 				r.Delete("/shares/{shareID}", s.revokeShare)
 			})
 
-			r.Group(func(r chi.Router) {
+r.Group(func(r chi.Router) {
 				r.Use(s.sessionRequired)
+				r.Get("/settings/backup", s.getBackupSettings)
+				r.Put("/settings/backup", s.saveBackupSettings)
+				r.Post("/settings/backup/test", s.testBackupSettings)
+				r.Post("/backups", s.startBackup)
+				r.Get("/backups/{jobID}", s.backupStatus)
 				r.Get("/auth/me", s.me)
 				r.Get("/auth/avatar", s.avatar)
 				r.Post("/auth/logout", s.logout)
