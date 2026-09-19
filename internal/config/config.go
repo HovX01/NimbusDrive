@@ -34,6 +34,9 @@ type Config struct {
 	TikTokSecret        string
 	MetaAppID           string
 	MetaAppSecret       string
+	S3Enabled           bool
+	S3Port              string
+	S3Region            string
 }
 
 func Load() (Config, error) {
@@ -60,6 +63,9 @@ func Load() (Config, error) {
 		TikTokSecret:    strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_SECRET")),
 		MetaAppID:       strings.TrimSpace(os.Getenv("META_APP_ID")),
 		MetaAppSecret:   strings.TrimSpace(os.Getenv("META_APP_SECRET")),
+		S3Enabled:       getenvBool("NIMBUS_S3_ENABLED", false),
+		S3Port:          getenv("NIMBUS_S3_PORT", "9091"),
+		S3Region:        strings.TrimSpace(os.Getenv("NIMBUS_S3_REGION")),
 	}
 
 	if id := strings.TrimSpace(os.Getenv("TELEGRAM_API_ID")); id != "" {
@@ -115,6 +121,10 @@ func Load() (Config, error) {
 				cfg.ChunkSize = botChunk
 			}
 		}
+	}
+
+	if cfg.S3Region == "" {
+		cfg.S3Region = "us-east-1"
 	}
 
 	return cfg, nil

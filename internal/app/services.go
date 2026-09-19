@@ -225,6 +225,17 @@ func (s *Services) Mkdir(ctx context.Context, parentID, name string) (domain.Nod
 }
 
 func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeType string, r io.Reader, _ int64) (domain.Node, error) {
+	return s.upload(ctx, parentID, filename, mimeType, r, true)
+}
+
+// UploadNoDedup stores bytes under parentID without content-hash dedup. The S3
+// gateway uses this: its keys must exist even when identical bytes are already
+// stored under another key.
+func (s *Services) UploadNoDedup(ctx context.Context, parentID, filename, mimeType string, r io.Reader) (domain.Node, error) {
+	return s.upload(ctx, parentID, filename, mimeType, r, false)
+}
+
+func (s *Services) upload(ctx context.Context, parentID, filename string, mimeType string, r io.Reader, dedup bool) (domain.Node, error) {
 	filename = domain.SanitizeDownloadName(filename)
 	if err := domain.ValidateNodeName(filename); err != nil {
 		return domain.Node{}, err
@@ -248,43 +259,49 @@ func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeTy
 		}
 	}
 
-	tmpDir := filepath.Join(s.DataDir, "upload-tmp")
-	if strings.TrimSpace(s.DataDir) == "" {
-		tmpDir = filepath.Join(os.TempDir(), "nimbus-upload")
-	}
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return domain.Node{}, err
-	}
-	tmp, err := os.CreateTemp(tmpDir, "up-*")
-	if err != nil {
-		return domain.Node{}, err
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-	}()
-
-	h := sha256.New()
-	written, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, (2<<30)+1))
-	if err != nil {
-		return domain.Node{}, err
-	}
-	if written == 0 {
-		return domain.Node{}, fmt.Errorf("%w: empty file", domain.ErrValidation)
-	}
-	if written > 2<<30 {
-		return domain.Node{}, fmt.Errorf("%w: file too large", domain.ErrValidation)
-	}
-	hash := hex.EncodeToString(h.Sum(nil))
-	if existing, err := s.Nodes.FindByContentHash(ctx, hash); err == nil {
-		existing.Duplicate = true
-		return existing, nil
-	} else if !errors.Is(err, domain.ErrNotFound) {
-		return domain.Node{}, err
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return domain.Node{}, err
+	var reader io.Reader = r
+	contentHash := ""
+	if dedup {
+		// Dedup needs the content hash before spending Telegram parts, so buffer
+		// once to disk. The gateway streams instead (UploadNoDedup) and has no cap.
+		tmpDir := filepath.Join(s.DataDir, "upload-tmp")
+		if strings.TrimSpace(s.DataDir) == "" {
+			tmpDir = filepath.Join(os.TempDir(), "nimbus-upload")
+		}
+		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+			return domain.Node{}, err
+		}
+		tmp, err := os.CreateTemp(tmpDir, "up-*")
+		if err != nil {
+			return domain.Node{}, err
+		}
+		tmpPath := tmp.Name()
+		defer func() {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}()
+		h := sha256.New()
+		written, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, (2<<30)+1))
+		if err != nil {
+			return domain.Node{}, err
+		}
+		if written == 0 {
+			return domain.Node{}, fmt.Errorf("%w: empty file", domain.ErrValidation)
+		}
+		if written > 2<<30 {
+			return domain.Node{}, fmt.Errorf("%w: file too large", domain.ErrValidation)
+		}
+		contentHash = hex.EncodeToString(h.Sum(nil))
+		if existing, err := s.Nodes.FindByContentHash(ctx, contentHash); err == nil {
+			existing.Duplicate = true
+			return existing, nil
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			return domain.Node{}, err
+		}
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			return domain.Node{}, err
+		}
+		reader = tmp
 	}
 
 	channelID, err := s.Blobs.EnsureStorageChannel(ctx)
@@ -315,75 +332,13 @@ func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeTy
 		workers = 3
 	}
 
-	buf := make([]byte, chunkSize)
-	var (
-		mu     sync.Mutex
-		parts  []domain.FilePart
-		total  int64
-		partNo int
-	)
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(workers)
-	sem := make(chan struct{}, workers)
-
-loop:
-	for {
-		n, readErr := io.ReadFull(tmp, buf)
-		if n > 0 {
-			mu.Lock()
-			pn := partNo
-			partNo++
-			total += int64(n)
-			mu.Unlock()
-
-			select {
-			case <-gctx.Done():
-				_ = s.rollbackUpload(ctx, node.ID, snapshotParts(&mu, &parts))
-				return domain.Node{}, gctx.Err()
-			case sem <- struct{}{}:
-			}
-
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			g.Go(func() error {
-				defer func() { <-sem }()
-				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, pn, node.ID, bytes.NewReader(chunk), int64(len(chunk)))
-				if upErr != nil {
-					return upErr
-				}
-				mu.Lock()
-				parts = append(parts, domain.FilePart{
-					ID:        uuid.NewString(),
-					FileID:    node.ID,
-					PartNo:    pn,
-					MessageID: msgID,
-					Size:      int64(len(chunk)),
-					ChannelID: channelID,
-				})
-				mu.Unlock()
-				return nil
-			})
-		}
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			break loop
-		}
-		if readErr != nil {
-			_ = s.rollbackUpload(ctx, node.ID, snapshotParts(&mu, &parts))
-			return domain.Node{}, readErr
-		}
-	}
-
-	if err := g.Wait(); err != nil {
-		_ = s.rollbackUpload(ctx, node.ID, snapshotParts(&mu, &parts))
+	finalParts, finalTotal, streamedHash, err := s.uploadParts(ctx, channelID, node.ID, reader, chunkSize, workers, contentHash == "")
+	if err != nil {
 		return domain.Node{}, err
 	}
-
-	mu.Lock()
-	finalParts := append([]domain.FilePart(nil), parts...)
-	finalTotal := total
-	mu.Unlock()
-	sort.Slice(finalParts, func(i, j int) bool { return finalParts[i].PartNo < finalParts[j].PartNo })
+	if contentHash == "" {
+		contentHash = streamedHash
+	}
 
 	if finalTotal == 0 {
 		_ = s.rollbackUpload(ctx, node.ID, finalParts)
@@ -401,7 +356,7 @@ loop:
 	if err := s.Nodes.UpdateStatus(ctx, node.ID, domain.StatusReady); err != nil {
 		return domain.Node{}, err
 	}
-	_ = s.Nodes.SetContentHash(ctx, node.ID, hash)
+	_ = s.Nodes.SetContentHash(ctx, node.ID, contentHash)
 	node.Size = finalTotal
 	node.Status = domain.StatusReady
 
@@ -413,6 +368,87 @@ loop:
 		}(node.ID)
 	}
 	return node, nil
+}
+
+// uploadParts streams r into the blob store as chunked parts, hashing as it
+// reads when hash is true. It rolls back anything it uploaded on failure and
+// returns parts sorted by part number. Streaming means the total size is
+// unconstrained — only the reader length limits it.
+func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID string, r io.Reader, chunkSize, workers int, hash bool) ([]domain.FilePart, int64, string, error) {
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(workers)
+	sem := make(chan struct{}, workers)
+	buf := make([]byte, chunkSize)
+	hasher := sha256.New()
+
+	var (
+		mu     sync.Mutex
+		parts  []domain.FilePart
+		total  int64
+		partNo int
+	)
+
+loop:
+	for {
+		n, readErr := io.ReadFull(r, buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			if hash {
+				hasher.Write(chunk)
+			}
+			mu.Lock()
+			pn := partNo
+			partNo++
+			total += int64(n)
+			mu.Unlock()
+
+			select {
+			case <-gctx.Done():
+				_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
+				return nil, 0, "", gctx.Err()
+			case sem <- struct{}{}:
+			}
+
+			g.Go(func() error {
+				defer func() { <-sem }()
+				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, pn, nodeID, bytes.NewReader(chunk), int64(len(chunk)))
+				if upErr != nil {
+					return upErr
+				}
+				mu.Lock()
+				parts = append(parts, domain.FilePart{
+					ID:        uuid.NewString(),
+					FileID:    nodeID,
+					PartNo:    pn,
+					MessageID: msgID,
+					Size:      int64(len(chunk)),
+					ChannelID: channelID,
+				})
+				mu.Unlock()
+				return nil
+			})
+		}
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			break loop
+		}
+		if readErr != nil {
+			_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
+			return nil, 0, "", readErr
+		}
+	}
+
+	if err := g.Wait(); err != nil {
+		_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
+		return nil, 0, "", err
+	}
+
+	mu.Lock()
+	finalParts := append([]domain.FilePart(nil), parts...)
+	finalTotal := total
+	mu.Unlock()
+	sort.Slice(finalParts, func(i, j int) bool { return finalParts[i].PartNo < finalParts[j].PartNo })
+	return finalParts, finalTotal, hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func (s *Services) uniqueChildName(ctx context.Context, parentID, name string) (string, error) {

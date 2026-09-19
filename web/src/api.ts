@@ -434,6 +434,34 @@ export async function backupStatus(token: string, jobId: string) {
   );
 }
 
+export type S3Settings = {
+  enabled: boolean;
+  region: string;
+  access_key: string;
+  secret_key: string;
+  endpoint: string;
+  rclone: string;
+};
+
+export async function fetchS3Settings(token: string) {
+  return parse<S3Settings>(
+    await fetch(`${API}/api/v1/settings/s3`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function saveS3Settings(
+  token: string,
+  body: { region?: string; regenerate?: boolean },
+) {
+  return parse<S3Settings>(
+    await fetch(`${API}/api/v1/settings/s3`, {
+      method: "PUT",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
 export type TelegramBot = {
   id: number;
   username?: string;

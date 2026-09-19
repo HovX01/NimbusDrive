@@ -28,9 +28,10 @@ type Server struct {
 	apiKey           string
 	requireAccessKey bool
 	webDir           string
+	s3Port           string
 }
 
-func New(svc *app.Services, corsOrigins []string, accessSecret, apiKey string, public bool, webDir string) *Server {
+func New(svc *app.Services, corsOrigins []string, accessSecret, apiKey string, public bool, webDir, s3Port string) *Server {
 	return &Server{
 		svc:              svc,
 		corsOrigins:      corsOrigins,
@@ -38,6 +39,7 @@ func New(svc *app.Services, corsOrigins []string, accessSecret, apiKey string, p
 		apiKey:           apiKey,
 		requireAccessKey: !public,
 		webDir:           strings.TrimSpace(webDir),
+		s3Port:           strings.TrimSpace(s3Port),
 	}
 }
 
@@ -146,9 +148,11 @@ func (s *Server) Router() http.Handler {
 
 r.Group(func(r chi.Router) {
 				r.Use(s.sessionRequired)
-				r.Get("/settings/backup", s.getBackupSettings)
-				r.Put("/settings/backup", s.saveBackupSettings)
-				r.Post("/settings/backup/test", s.testBackupSettings)
+			r.Get("/settings/backup", s.getBackupSettings)
+			r.Put("/settings/backup", s.saveBackupSettings)
+			r.Post("/settings/backup/test", s.testBackupSettings)
+			r.Get("/settings/s3", s.getS3Settings)
+			r.Put("/settings/s3", s.saveS3Settings)
 				r.Post("/backups", s.startBackup)
 				r.Get("/backups/{jobID}", s.backupStatus)
 				r.Get("/auth/me", s.me)

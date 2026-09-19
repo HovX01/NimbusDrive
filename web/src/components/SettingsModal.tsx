@@ -7,6 +7,8 @@ import {
   saveBackupSettings,
   testBackupSettings,
   startBackup,
+  fetchS3Settings,
+  saveS3Settings,
   listBots,
   listSocialConnections,
   setBotAllowed,
@@ -53,6 +55,19 @@ const [backupEndpoint, setBackupEndpoint] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState("");
   const [backupError, setBackupError] = useState("");
+  const [s3, setS3] = useState<{
+    enabled: boolean;
+    region: string;
+    accessKey: string;
+    secretKey: string;
+    endpoint: string;
+    rclone: string;
+  } | null>(null);
+  const [s3Region, setS3Region] = useState("us-east-1");
+  const [s3Busy, setS3Busy] = useState(false);
+  const [s3Message, setS3Message] = useState("");
+  const [s3Error, setS3Error] = useState("");
+  const [showS3Secret, setShowS3Secret] = useState(false);
   const connectorTimeout = useRef<number | null>(null);
 
   async function refreshSocial() {
@@ -93,6 +108,22 @@ useEffect(() => {
         setBackupCredentialsConfigured(s.credentials_configured);
       })
       .catch((e) => setBackupError((e as Error).message));
+  }, [token]);
+
+  useEffect(() => {
+    fetchS3Settings(token)
+      .then((s) => {
+        setS3({
+          enabled: s.enabled,
+          region: s.region,
+          accessKey: s.access_key,
+          secretKey: s.secret_key,
+          endpoint: s.endpoint,
+          rclone: s.rclone,
+        });
+        setS3Region(s.region);
+      })
+      .catch((e) => setS3Error((e as Error).message));
   }, [token]);
 
   useEffect(() => {
@@ -323,6 +354,65 @@ async function handleSaveBackup() {
     }
   }
 
+  function applyS3Settings(s: {
+    enabled: boolean;
+    region: string;
+    access_key: string;
+    secret_key: string;
+    endpoint: string;
+    rclone: string;
+  }) {
+    setS3({
+      enabled: s.enabled,
+      region: s.region,
+      accessKey: s.access_key,
+      secretKey: s.secret_key,
+      endpoint: s.endpoint,
+      rclone: s.rclone,
+    });
+    setS3Region(s.region);
+  }
+
+  async function handleSaveS3Region() {
+    setS3Busy(true);
+    setS3Error("");
+    setS3Message("");
+    try {
+      const s = await saveS3Settings(token, { region: s3Region });
+      applyS3Settings(s);
+      setS3Message("Region saved. Restart Nimbus to apply.");
+    } catch (e) {
+      setS3Error((e as Error).message);
+    } finally {
+      setS3Busy(false);
+    }
+  }
+
+  async function handleRotateS3Keys() {
+    setS3Busy(true);
+    setS3Error("");
+    setS3Message("");
+    try {
+      const s = await saveS3Settings(token, { regenerate: true });
+      applyS3Settings(s);
+      setS3Message("Keys regenerated. Reconfigure your S3 clients.");
+    } catch (e) {
+      setS3Error((e as Error).message);
+    } finally {
+      setS3Busy(false);
+    }
+  }
+
+  async function copyS3Rclone() {
+    if (!s3) return;
+    try {
+      await navigator.clipboard.writeText(s3.rclone);
+      setS3Message("rclone config copied to clipboard.");
+    } catch {
+      setS3Error("Copy failed. Select the text manually.");
+    }
+  }
+
   function updateCookieForm(provider: SocialProvider, patch: Partial<{ displayName: string; file: File | null }>) {
     setCookieForms((prev) => {
       const nextForm = prev[provider] ?? { displayName: "", file: null };
@@ -471,6 +561,58 @@ async function handleSaveBackup() {
                 <button type="button" className="btn ghost" disabled={backupBusy || (!backupCredentialsConfigured && !backupSecretKey)} onClick={() => void handleTestBackup()}>Test Connection</button>
                 <button type="button" className="btn ghost" disabled={backupBusy || !backupEnabled} onClick={() => void handleRunBackup()}>Run Database Backup</button>
               </div>
+            </section>
+
+            <section className="settings-section">
+              <h3>S3 Access</h3>
+              <p className="meta">
+                Expose this drive as an S3-compatible endpoint so other tools (rclone, aws-cli,
+                restic, s3cmd) can save and read files here. Buckets are top-level folders; keys
+                are nested paths. {!s3?.enabled && "Enable it with NIMBUS_S3_ENABLED=true, then restart."}
+              </p>
+              {!s3 ? (
+                <p className="meta">Loading…</p>
+              ) : (
+                <>
+                  {s3Error && <p className="error-text">{s3Error}</p>}
+                  {s3Message && <p className="meta">{s3Message}</p>}
+                  <label>
+                    Endpoint
+                    <input value={s3.endpoint} readOnly />
+                  </label>
+                  <label>
+                    Region
+                    <input value={s3Region} onChange={(e) => setS3Region(e.target.value)} />
+                  </label>
+                  <label>
+                    Access Key ID
+                    <input value={s3.accessKey} readOnly />
+                  </label>
+                  <label>
+                    Secret Access Key
+                    <input
+                      type={showS3Secret ? "text" : "password"}
+                      value={s3.secretKey}
+                      readOnly
+                    />
+                  </label>
+                  <div className="row gap">
+                    <label className="row gap">
+                      <input type="checkbox" checked={showS3Secret} onChange={(e) => setShowS3Secret(e.target.checked)} /> Show secret
+                    </label>
+                    {!s3.enabled && <span className="meta">Disabled (NIMBUS_S3_ENABLED=false)</span>}
+                  </div>
+                  <label>
+                    rclone config
+                    <textarea rows={9} value={s3.rclone} readOnly />
+                  </label>
+                  <div className="row gap">
+                    <button type="button" className="btn" disabled={s3Busy} onClick={() => void handleSaveS3Region()}>Save Region</button>
+                    <button type="button" className="btn ghost" disabled={s3Busy} onClick={() => void copyS3Rclone()}>Copy rclone config</button>
+                    <button type="button" className="btn ghost" disabled={s3Busy} onClick={() => void handleRotateS3Keys()}>Regenerate Keys</button>
+                  </div>
+                </>
+              )}
             </section>
 
             <section className="settings-section">

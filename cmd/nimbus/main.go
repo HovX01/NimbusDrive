@@ -15,6 +15,7 @@ import (
 	"github.com/vrc/nimbus/internal/config"
 	"github.com/vrc/nimbus/internal/domain"
 	httpserver "github.com/vrc/nimbus/internal/http"
+	"github.com/vrc/nimbus/internal/s3gw"
 	"github.com/vrc/nimbus/internal/store/sqlite"
 	"github.com/vrc/nimbus/internal/telegram"
 )
@@ -99,8 +100,29 @@ UploadWorkers: 3,
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpserver.New(svc, cfg.CORSOrigins, cfg.AccessSecret, cfg.APIKey, cfg.Public, cfg.WebDir).Router(),
+		Handler:           httpserver.New(svc, cfg.CORSOrigins, cfg.AccessSecret, cfg.APIKey, cfg.Public, cfg.WebDir, cfg.S3Port).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	var s3srv *http.Server
+	s3cfg, err := s3gw.Load(cfg.DataDir, cfg.S3Enabled, cfg.S3Region)
+	if err != nil {
+		log.Fatalf("s3 gateway: %v", err)
+	}
+	if s3cfg.Enabled {
+		s3srv = &http.Server{
+			Addr:              ":" + cfg.S3Port,
+			Handler:           s3gw.New(svc, s3cfg, cfg.DataDir).Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			log.Printf("s3 gateway listening on http://localhost:%s (region %s, access key %s)", cfg.S3Port, s3cfg.Region, s3cfg.AccessKey)
+			if err := s3srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("s3 gateway: %v", err)
+			}
+		}()
+	} else {
+		log.Printf("s3 gateway disabled (NIMBUS_S3_ENABLED=true to enable, access key %s)", s3cfg.AccessKey)
 	}
 
 	go func() {
@@ -115,5 +137,8 @@ UploadWorkers: 3,
 	defer shutdownCancel()
 	tg.Stop()
 	_ = srv.Shutdown(shutdownCtx)
+	if s3srv != nil {
+		_ = s3srv.Shutdown(shutdownCtx)
+	}
 	log.Println("nimbus stopped")
 }
