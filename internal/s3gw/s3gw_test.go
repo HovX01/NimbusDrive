@@ -360,6 +360,69 @@ func TestGatewayStreamsUploads(t *testing.T) {
 	}
 }
 
+func TestBucketManagement(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := newTestServer(t)
+
+	if _, err := CreateBucket(ctx, svc, "Bad_Name"); err == nil {
+		t.Fatalf("uppercase bucket name should be rejected")
+	}
+	if _, err := CreateBucket(ctx, svc, "ab"); err == nil {
+		t.Fatalf("2-char bucket name should be rejected")
+	}
+	if _, err := CreateBucket(ctx, svc, "logs"); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	if _, err := CreateBucket(ctx, svc, "logs"); err == nil {
+		t.Fatalf("duplicate bucket name should be rejected")
+	}
+
+	buckets, err := ListBuckets(ctx, svc)
+	if err != nil {
+		t.Fatalf("list buckets: %v", err)
+	}
+	if len(buckets) != 1 || buckets[0].Name != "logs" {
+		t.Fatalf("unexpected buckets: %+v", buckets)
+	}
+
+	// An empty bucket reports no objects.
+	objects, err := ListBucketObjects(ctx, svc, "logs")
+	if err != nil {
+		t.Fatalf("list objects: %v", err)
+	}
+	if len(objects) != 0 {
+		t.Fatalf("expected empty bucket, got %+v", objects)
+	}
+
+	// Store a nested object through the gateway's upload path and confirm it shows up.
+	folder, err := svc.Nodes.FindChildByName(ctx, "root", "logs")
+	if err != nil {
+		t.Fatalf("find bucket folder: %v", err)
+	}
+	if _, err := svc.UploadNoDedup(ctx, folder.ID, "app.log", "text/plain", strings.NewReader("line one")); err != nil {
+		t.Fatalf("upload object: %v", err)
+	}
+	sub, err := svc.Mkdir(ctx, folder.ID, "archive")
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, err := svc.UploadNoDedup(ctx, sub.ID, "old.log", "text/plain", strings.NewReader("old")); err != nil {
+		t.Fatalf("upload nested object: %v", err)
+	}
+
+	objects, err = ListBucketObjects(ctx, svc, "logs")
+	if err != nil {
+		t.Fatalf("list objects after upload: %v", err)
+	}
+	keys := map[string]int64{}
+	for _, o := range objects {
+		keys[o.Key] = o.Size
+	}
+	if keys["app.log"] != 8 || keys["archive/old.log"] != 3 {
+		t.Fatalf("object listing = %+v", keys)
+	}
+}
+
 func TestAWSChunkReader(t *testing.T) {
 	// Two 4-byte chunks plus a terminating zero chunk, matching the framing
 	// AWS clients emit for streaming uploads.

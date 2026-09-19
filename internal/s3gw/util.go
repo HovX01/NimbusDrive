@@ -187,7 +187,7 @@ func parseObjectRange(header string, size int64) (start, end int64, ok bool, err
 }
 
 // validateBucketName enforces the S3 bucket naming rules clients depend on.
-func validateBucketName(name string) error {
+func ValidateBucketName(name string) error {
 	if len(name) < 3 || len(name) > 63 {
 		return fmt.Errorf("bucket name must be 3-63 characters")
 	}

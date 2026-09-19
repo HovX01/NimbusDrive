@@ -117,7 +117,7 @@ func (s *Server) listBuckets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) headBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	if _, err := s.bucketNode(r.Context(), bucket); err != nil {
+	if _, err := bucketNodeOf(r.Context(), s.svc, bucket); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			writeS3Error(w, r, http.StatusNotFound, codeNoSuchBucket, "bucket does not exist")
 			return
@@ -130,7 +130,7 @@ func (s *Server) headBucket(w http.ResponseWriter, r *http.Request, bucket strin
 }
 
 func (s *Server) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	if err := validateBucketName(bucket); err != nil {
+	if err := ValidateBucketName(bucket); err != nil {
 		writeS3Error(w, r, http.StatusBadRequest, codeInvalidBucketName, err.Error())
 		return
 	}
@@ -162,7 +162,7 @@ func (s *Server) listObjects(w http.ResponseWriter, r *http.Request, bucket stri
 		writeXML(w, http.StatusOK, locationConstraintResult{Region: s.cfg.Region})
 		return
 	}
-	bNode, err := s.bucketNode(ctx, bucket)
+	bNode, err := bucketNodeOf(ctx, s.svc, bucket)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			writeS3Error(w, r, http.StatusNotFound, codeNoSuchBucket, "bucket does not exist")
@@ -238,7 +238,7 @@ func (s *Server) listObjects(w http.ResponseWriter, r *http.Request, bucket stri
 			})
 		}
 	} else {
-		if err := s.walk(ctx, listNode.ID, folderKey, func(key string, n domain.Node) {
+		if err := walkTree(ctx, s.svc, listNode.ID, folderKey, func(key string, n domain.Node) {
 			if !strings.HasPrefix(key, prefix) {
 				return
 			}
@@ -342,7 +342,7 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key s
 		contentType = "application/octet-stream"
 	}
 	if strings.HasSuffix(key, "/") {
-		bNode, err := s.bucketNode(r.Context(), bucket)
+		bNode, err := bucketNodeOf(r.Context(), s.svc, bucket)
 		if err != nil {
 			writeObjectError(w, r, err)
 			return
@@ -448,7 +448,7 @@ func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucke
 // storeObject creates or replaces the object at key, streaming bytes straight
 // into the drive's chunked storage backend.
 func (s *Server) storeObject(ctx context.Context, bucket, key, contentType string, reader io.Reader) (domain.Node, error) {
-	bNode, err := s.bucketNode(ctx, bucket)
+	bNode, err := bucketNodeOf(ctx, s.svc, bucket)
 	if err != nil {
 		return domain.Node{}, err
 	}

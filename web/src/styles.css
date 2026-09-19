@@ -1610,6 +1610,24 @@ select:disabled {
   font-size: 0.95rem;
   font-weight: 650;
 }
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.data-table td {
+  word-break: break-all;
+}
 .bot-grant-list {
   list-style: none;
   margin: 0;

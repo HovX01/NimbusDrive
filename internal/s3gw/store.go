@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/vrc/nimbus/internal/app"
 	"github.com/vrc/nimbus/internal/domain"
 )
 
@@ -53,9 +54,9 @@ func joinKey(folder, name string) string {
 	return folder + "/" + name
 }
 
-// bucketNode resolves a bucket name to its top-level folder node.
-func (s *Server) bucketNode(ctx context.Context, bucket string) (domain.Node, error) {
-	node, err := s.svc.Nodes.FindChildByName(ctx, rootID, bucket)
+// bucketNodeOf resolves a bucket name to its top-level folder node.
+func bucketNodeOf(ctx context.Context, svc *app.Services, bucket string) (domain.Node, error) {
+	node, err := svc.Nodes.FindChildByName(ctx, rootID, bucket)
 	if err != nil {
 		return domain.Node{}, err
 	}
@@ -113,7 +114,7 @@ func (s *Server) ensureFolderPath(ctx context.Context, startID, path string) (do
 
 // lookupObject resolves a full object key to its node (file or folder).
 func (s *Server) lookupObject(ctx context.Context, bucket, key string) (domain.Node, error) {
-	bNode, err := s.bucketNode(ctx, bucket)
+	bNode, err := bucketNodeOf(ctx, s.svc, bucket)
 	if err != nil {
 		return domain.Node{}, err
 	}
@@ -128,16 +129,16 @@ func (s *Server) lookupObject(ctx context.Context, bucket, key string) (domain.N
 	return s.svc.Nodes.FindChildByName(ctx, folder.ID, name)
 }
 
-// walk visits every ready file under nodeID, reporting full keys.
-func (s *Server) walk(ctx context.Context, nodeID, keyPrefix string, fn func(key string, n domain.Node)) error {
-	children, err := s.svc.List(ctx, nodeID)
+// walkTree visits every ready file under nodeID, reporting full keys.
+func walkTree(ctx context.Context, svc *app.Services, nodeID, keyPrefix string, fn func(key string, n domain.Node)) error {
+	children, err := svc.List(ctx, nodeID)
 	if err != nil {
 		return err
 	}
 	for _, c := range children {
 		key := joinKey(keyPrefix, c.Name)
 		if c.Type == domain.NodeFolder {
-			if err := s.walk(ctx, c.ID, key, fn); err != nil {
+			if err := walkTree(ctx, svc, c.ID, key, fn); err != nil {
 				return err
 			}
 			continue

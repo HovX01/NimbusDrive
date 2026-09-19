@@ -462,6 +462,34 @@ export async function saveS3Settings(
   );
 }
 
+export type S3Bucket = { name: string; created_at: string };
+
+export type S3Object = { key: string; size: number; mime_type: string; modified: string };
+
+export async function fetchS3Buckets(token: string) {
+  return parse<{ items: S3Bucket[] }>(
+    await fetch(`${API}/api/v1/s3/buckets`, { headers: authHeaders(token) }),
+  );
+}
+
+export async function createS3Bucket(token: string, name: string) {
+  return parse<S3Bucket>(
+    await fetch(`${API}/api/v1/s3/buckets`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  );
+}
+
+export async function fetchS3BucketObjects(token: string, bucket: string) {
+  return parse<{ bucket: string; items: S3Object[]; upload: string }>(
+    await fetch(`${API}/api/v1/s3/buckets/${encodeURIComponent(bucket)}`, {
+      headers: authHeaders(token),
+    }),
+  );
+}
+
 export type TelegramBot = {
   id: number;
   username?: string;

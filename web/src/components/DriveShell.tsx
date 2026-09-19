@@ -39,6 +39,7 @@ type Props = {
   ) => Promise<void>;
   onImportURL: (urls: string[]) => Promise<void>;
   onOpenSettings: () => void;
+  onOpenS3Buckets: () => void;
   onUpload: (files: FileList | File[]) => void;
   onDownload: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -84,6 +85,7 @@ export function DriveShell(props: Props) {
     onFetchURL,
     onImportURL,
     onOpenSettings,
+    onOpenS3Buckets,
     onUpload,
     onDownload,
     onRename,
@@ -429,6 +431,17 @@ export function DriveShell(props: Props) {
           >
             <i className="fa-solid fa-code" />
             <span>Storage API</span>
+          </button>
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => {
+              onOpenS3Buckets();
+              setMenuOpen(false);
+            }}
+          >
+            <i className="fa-solid fa-cube" />
+            <span>S3 Buckets</span>
           </button>
         </nav>
         <div className="side-foot">

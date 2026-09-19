@@ -37,6 +37,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DriveShell } from "./components/DriveShell";
 import { ShareModal } from "./components/ShareModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { S3BucketsModal } from "./components/S3BucketsModal";
 import { SendTelegramModal } from "./components/SendTelegramModal";
 import { ToastStack, type Toast, type ToastKind } from "./components/ToastStack";
 import { UploadPanel, type UploadJob } from "./components/UploadPanel";
@@ -78,6 +79,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [s3BucketsOpen, setS3BucketsOpen] = useState(false);
   const [sharedFetchUrl, setSharedFetchUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -825,6 +827,7 @@ export default function App() {
         onFetchURL={onFetchURL}
         onImportURL={onImportURL}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenS3Buckets={() => setS3BucketsOpen(true)}
         onUpload={onUpload}
         onDownload={onDownload}
         onRename={onRename}
@@ -864,6 +867,9 @@ export default function App() {
       )}
       {settingsOpen && token && (
         <SettingsModal token={token} onClose={() => setSettingsOpen(false)} />
+      )}
+      {s3BucketsOpen && token && (
+        <S3BucketsModal token={token} onClose={() => setS3BucketsOpen(false)} />
       )}
       {shareTarget && (
         <ShareModal
