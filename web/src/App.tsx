@@ -68,7 +68,7 @@ export default function App() {
   ]);
   const [items, setItems] = useState<Node[]>([]);
   const [trashItems, setTrashItems] = useState<Node[]>([]);
-  const [section, setSection] = useState<"drive" | "trash" | "settings" | "buckets" | "dashboard">("drive");
+  const [section, setSection] = useState<"drive" | "trash" | "settings" | "buckets" | "dashboard">("dashboard");
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
   const [sendTarget, setSendTarget] = useState<{ id: string; name: string } | null>(null);
   const [shares, setShares] = useState<ShareInfo[]>([]);

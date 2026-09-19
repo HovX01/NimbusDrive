@@ -19,6 +19,8 @@ import {
   LogOut,
   Menu,
   Move,
+  PanelLeftClose,
+  PanelLeftOpen,
   PenLine,
   Plus,
   Scissors,
@@ -34,6 +36,7 @@ import {
 import { searchFiles, type Node, type SearchHit, type User } from "../api";
 import { formatBytes, isPreviewable, previewKind } from "../lib/files";
 import { DashboardPage } from "./DashboardPage";
+import { HeaderLeadingContext } from "./PageHeader";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./BrandMark";
 import { DriveCard } from "./DriveCard";
@@ -44,7 +47,7 @@ import { FetchModal } from "./FetchModal";
 import { MoveModal } from "./MoveModal";
 import { MediaStudioModal } from "./MediaStudioModal";
 import { VideoEditor } from "./editor/VideoEditor";
-import { UserBadge } from "./UserBadge";
+import { UserMenu } from "./UserMenu";
 import { SettingsPage } from "./SettingsPage";
 import { S3BucketsPage } from "./S3BucketsPage";
 import { isFileDrag, isNodeDrag, readNodeDragData, setNodeDragData } from "../lib/drag";
@@ -65,6 +68,7 @@ import { Separator } from "./ui/separator";
 import { Skeleton } from "./ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { Sheet, SheetContent } from "./ui/sheet";
 
 type Crumb = { id: string; name: string };
 type ViewMode = "grid" | "list";
@@ -164,6 +168,7 @@ export function DriveShell(props: Props) {
   const [fetchMessage, setFetchMessage] = useState("");
   const [dockSheet, setDockSheet] = useState<null | "create" | "more">(null);
   const [dockHidden, setDockHidden] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("nimbus_sidebar") === "collapsed");
   const [mediaNode, setMediaNode] = useState<Node | null>(null);
   const [editVideoNode, setEditVideoNode] = useState<Node | null>(null);
   const [pendingFetchUrl, setPendingFetchUrl] = useState("");
@@ -438,82 +443,115 @@ export function DriveShell(props: Props) {
     setMenuOpen(false);
   }
 
-  const navItems = [
-    { id: "drive", label: "My Drive", icon: HardDrive, active: section === "drive", run: goDrive },
-    { id: "trash", label: "Trash", icon: Trash2, active: section === "trash", run: goTrash },
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, active: section === "dashboard", run: () => { onSectionChange("dashboard"); setQuery(""); setHits(null); setMenuOpen(false); } },
-    { id: "api", label: "Storage API", icon: KeyRound, active: section === "settings", run: () => { onSectionChange("settings"); setQuery(""); setHits(null); setMenuOpen(false); } },
-    { id: "s3", label: "S3 Buckets", icon: Boxes, active: section === "buckets", run: () => { onSectionChange("buckets"); setQuery(""); setHits(null); setMenuOpen(false); } },
+  const toggleSidebar = () =>
+    setCollapsed((c) => {
+      localStorage.setItem("nimbus_sidebar", c ? "expanded" : "collapsed");
+      return !c;
+    });
+  const sidebarToggle = (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      className="hidden -ml-1.5 text-muted-foreground hover:text-foreground lg:inline-flex"
+      onClick={toggleSidebar}
+    >
+      {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+    </Button>
+  );
+  const navGroups = [
+    {
+      label: "Files",
+      items: [
+        { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, active: section === "dashboard", run: () => { onSectionChange("dashboard"); setQuery(""); setHits(null); setMenuOpen(false); } },
+        { id: "drive", label: "My Drive", icon: HardDrive, active: section === "drive", run: goDrive },
+        { id: "trash", label: "Trash", icon: Trash2, active: section === "trash", run: goTrash },
+      ],
+    },
+    {
+      label: "Storage",
+      items: [
+        { id: "api", label: "Storage API", icon: KeyRound, active: section === "settings", run: () => { onSectionChange("settings"); setQuery(""); setHits(null); setMenuOpen(false); } },
+        { id: "s3", label: "S3 Buckets", icon: Boxes, active: section === "buckets", run: () => { onSectionChange("buckets"); setQuery(""); setHits(null); setMenuOpen(false); } },
+      ],
+    },
   ];
+
+  // Shared sidebar markup: desktop honors collapse (lg-scoped), mobile is always expanded.
+  const renderSidebar = (collapsible: boolean) => (
+    <>
+      <div className={cn("flex items-center px-1.5 py-1 pr-10", collapsible && collapsed && "lg:justify-center lg:pr-1.5")}>
+        <div className={cn(collapsible && collapsed && "lg:[&_span]:hidden")}>
+          <BrandMark />
+        </div>
+      </div>
+      {navGroups.map((group) => (
+        <nav key={group.label} className="grid gap-0.5" aria-label={group.label}>
+          <p className={cn(
+            "px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground",
+            collapsible && collapsed && "lg:hidden",
+          )}>
+            {group.label}
+          </p>
+          {group.items.map((item) => (
+            <Tooltip key={item.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={item.run}
+                  aria-current={item.active ? "page" : undefined}
+                  aria-label={item.label}
+                  className={cn(
+                    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+                    collapsible && collapsed && "lg:gap-0 lg:justify-center lg:px-0 lg:py-2.5",
+                    item.active
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                  )}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  <span className={cn(collapsible && collapsed && "lg:hidden")}>{item.label}</span>
+                </button>
+              </TooltipTrigger>
+              {collapsible && collapsed && <TooltipContent side="right">{item.label}</TooltipContent>}
+            </Tooltip>
+          ))}
+        </nav>
+      ))}
+      <div className="mt-auto grid gap-2 border-t pt-3">
+        <UserMenu token={token} user={user} onLogout={onLogout} collapsed={collapsible && collapsed} />
+      </div>
+    </>
+  );
+  const sidebarBody = renderSidebar(true);
+  const sidebarMobileBody = renderSidebar(false);
 
   return (
     <TooltipProvider>
-      <div className="grid min-h-full bg-background lg:grid-cols-[260px_minmax(0,1fr)]">
-        {/* Sidebar */}
+      <div
+        className={cn(
+          "grid min-h-full bg-background transition-[grid-template-columns] duration-200",
+          collapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]",
+        )}
+      >
+        {/* Sidebar (desktop) */}
         <aside
           aria-label="Sidebar"
           className={cn(
-            "flex-col gap-2 border-r bg-card p-3 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:overflow-auto",
-            menuOpen ? "fixed inset-y-0 left-0 z-50 flex w-[280px] shadow-xl" : "hidden",
+            "hidden min-w-0 flex-col gap-2 border-r bg-card p-3 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:overflow-y-auto lg:overflow-x-hidden",
+            collapsed && "lg:w-[72px]",
           )}
         >
-          <div className="flex items-center justify-between px-1.5 py-1">
-            <BrandMark />
-            <Button variant="ghost" size="icon-sm" className="lg:hidden" aria-label="Close menu" onClick={() => setMenuOpen(false)}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <nav className="grid gap-0.5" aria-label="Primary">
-            <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Files</p>
-            {navItems.slice(0, 2).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={item.run}
-                aria-current={item.active ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-                  item.active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </button>
-            ))}
-          </nav>
-          <nav className="grid gap-0.5" aria-label="Storage">
-            <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Storage</p>
-            {navItems.slice(2).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={item.run}
-                aria-current={item.active ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-                  item.active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </button>
-            ))}
-          </nav>
-          <div className="mt-auto grid gap-2 border-t pt-3">
-            <UserBadge token={token} user={user} />
-            <Button variant="ghost" size="sm" className="justify-start text-muted-foreground" onClick={onLogout}>
-              <LogOut /> Sign out
-            </Button>
-          </div>
+          {sidebarBody}
         </aside>
-        {menuOpen && (
-          <button
-            type="button"
-            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-xs lg:hidden"
-            aria-label="Close menu"
-            onClick={() => setMenuOpen(false)}
-          />
-        )}
+
+        {/* Sidebar (mobile) — shadcn Sheet */}
+        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+          <SheetContent side="left" aria-label="Sidebar" className="lg:hidden">
+            {sidebarMobileBody}
+          </SheetContent>
+        </Sheet>
 
         {/* Main */}
         <div className="flex min-w-0 flex-col px-4 pb-28 pt-4 sm:px-6 lg:pb-10">
@@ -523,6 +561,7 @@ export function DriveShell(props: Props) {
             </Button>
             <BrandMark />
           </div>
+          <HeaderLeadingContext.Provider value={sidebarToggle}>
           {section === "settings" ? (
             <SettingsPage token={token} />
           ) : section === "buckets" ? (
@@ -532,6 +571,7 @@ export function DriveShell(props: Props) {
           ) : (
           <>
           <header className="mb-3 hidden flex-wrap items-center gap-2.5 lg:flex">
+            {sidebarToggle}
             <div className="relative min-w-0 max-w-[540px] flex-1">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -935,6 +975,7 @@ export function DriveShell(props: Props) {
           </div>
           </>
           )}
+          </HeaderLeadingContext.Provider>
         </div>
 
         {/* Mobile dock */}
