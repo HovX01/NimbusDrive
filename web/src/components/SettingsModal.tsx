@@ -7,7 +7,6 @@ import {
   saveBackupSettings,
   testBackupSettings,
   startBackup,
-  type BackupSettings,
   listBots,
   listSocialConnections,
   setBotAllowed,
