@@ -13,24 +13,27 @@ import (
 )
 
 type Config struct {
-	Port            string
-	DataDir         string
-	WebDir          string
-	DatabaseURL     string
-	JWTSecret       string
-	AccessSecret    string
-	APIKey          string
-	Public          bool
-	JWTTTLHours     int
-	TelegramAPIID   int
-	TelegramAPIHash string
-	ChunkSize       int
-	CORSOrigins     []string
-	PublicBaseURL   string
-	TikTokClientKey string
-	TikTokSecret    string
-	MetaAppID       string
-	MetaAppSecret   string
+	Port                string
+	DataDir             string
+	WebDir              string
+	DatabaseURL         string
+	JWTSecret           string
+	AccessSecret        string
+	APIKey              string
+	Public              bool
+	JWTTTLHours         int
+	TelegramAPIID       int
+	TelegramAPIHash     string
+	TelegramBotAPIURL   string
+	TelegramBotToken    string
+	TelegramStorageChatID string
+	ChunkSize           int
+	CORSOrigins         []string
+	PublicBaseURL       string
+	TikTokClientKey     string
+	TikTokSecret        string
+	MetaAppID           string
+	MetaAppSecret       string
 }
 
 func Load() (Config, error) {
@@ -46,8 +49,11 @@ func Load() (Config, error) {
 		APIKey:          strings.TrimSpace(os.Getenv("NIMBUS_API_KEY")),
 		Public:          getenvBool("NIMBUS_PUBLIC", false),
 		JWTTTLHours:     getenvInt("JWT_TTL_HOURS", 72),
-		TelegramAPIHash: strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
-		ChunkSize:       getenvInt("CHUNK_SIZE", 8*1024*1024),
+		TelegramAPIHash:     strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
+		TelegramBotAPIURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_API_URL")), "/"),
+		TelegramBotToken:    strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		TelegramStorageChatID: strings.TrimSpace(os.Getenv("TELEGRAM_STORAGE_CHAT_ID")),
+		ChunkSize:           getenvInt("CHUNK_SIZE", 8*1024*1024),
 		CORSOrigins:     splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
 		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("NIMBUS_PUBLIC_BASE_URL")), "/"),
 		TikTokClientKey: strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_KEY")),
@@ -95,8 +101,20 @@ func Load() (Config, error) {
 		cfg.APIKey = secret
 	}
 
-	if cfg.ChunkSize < 64*1024 {
+		if cfg.ChunkSize < 64*1024 {
 		return Config{}, fmt.Errorf("CHUNK_SIZE must be at least 64KiB")
+	}
+
+	if cfg.TelegramBotAPIURL != "" {
+		if botChunk := getenvInt("TELEGRAM_BOT_CHUNK_SIZE", 0); botChunk > 0 {
+			maxBotChunk := 800 * 1024 * 1024
+			if botChunk > maxBotChunk {
+				botChunk = maxBotChunk
+			}
+			if botChunk >= 64*1024 {
+				cfg.ChunkSize = botChunk
+			}
+		}
 	}
 
 	return cfg, nil

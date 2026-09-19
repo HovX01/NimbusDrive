@@ -10,9 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vrc/nimbus/internal/app"
+		"github.com/vrc/nimbus/internal/app"
 	"github.com/vrc/nimbus/internal/backup"
 	"github.com/vrc/nimbus/internal/config"
+	"github.com/vrc/nimbus/internal/domain"
 	httpserver "github.com/vrc/nimbus/internal/http"
 	"github.com/vrc/nimbus/internal/store/sqlite"
 	"github.com/vrc/nimbus/internal/telegram"
@@ -34,7 +35,16 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	tg := telegram.New(cfg.TelegramAPIID, cfg.TelegramAPIHash, cfg.DataDir)
+		tg := telegram.New(cfg.TelegramAPIID, cfg.TelegramAPIHash, cfg.DataDir)
+
+	var blobs domain.BlobStore = tg
+	if cfg.TelegramBotAPIURL != "" {
+		blobs = telegram.NewBotAPI(cfg.TelegramBotAPIURL, cfg.TelegramBotToken, cfg.TelegramStorageChatID)
+		log.Println("storage backend: Telegram Bot API")
+	} else {
+		log.Println("storage backend: MTProto")
+	}
+
 	go func() {
 		log.Println("connecting to Telegram…")
 		if err := tg.Start(ctx); err != nil {
@@ -64,7 +74,7 @@ func main() {
 		BotGrants:     store,
 		Social:        store,
 		SocialApp:     store,
-		Blobs:         tg,
+				Blobs:         blobs,
 		TG:            tg,
 		Messenger:     tg,
 		Setup:         tg,
