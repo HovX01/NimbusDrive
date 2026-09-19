@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Pause, Play } from "lucide-react";
 import { getProxyStatus, mediaStreamUrl, proxyStreamUrl } from "../../api";
 import type { Node, TimelineClip, TimelineData } from "../../api";
 import { previewKind } from "../../lib/files";
+import { cn } from "@/lib/utils";
+import { Button } from "../ui/button";
 
 type Props = {
   src: string;
@@ -212,19 +215,25 @@ export function Preview({ src, token, sourceNodeID, mediaByID, timeline, playhea
   }, [activeKind, onPlayhead, onPlaying, playing]);
 
   return (
-    <section className="editor-preview">
-      <div className="editor-preview-head">
-        <div>
-          <p className="editor-panel-title">Preview</p>
-          <span className="editor-muted">{activeNode?.name || "Timeline output"}</span>
+    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_52px] gap-3 rounded-2xl border bg-card p-3.5">
+      <div className="flex w-full items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Preview</p>
+          <span className="block truncate text-xs text-muted-foreground">{activeNode?.name || "Timeline output"}</span>
         </div>
-        <span className={`editor-preview-status ${proxyStatus}`}>
+        <span
+          className={cn(
+            "rounded-full border bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground",
+            proxyStatus === "ready" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
+            proxyStatus === "generating" && "border-amber-500/30 bg-amber-500/10 text-amber-600",
+          )}
+        >
           {activeKind === "image" ? "Image" : proxyStatus === "ready" ? "Proxy" : proxyStatus === "generating" ? "Proxying" : "Original"}
         </span>
       </div>
-      <div className="editor-preview-stage">
+      <div className="relative grid min-h-0 w-full place-items-center overflow-hidden rounded-2xl border bg-muted/30">
         <div
-          className="editor-preview-canvas"
+          className="relative grid max-h-full max-w-full place-items-center overflow-hidden rounded-lg bg-black shadow-lg"
           style={{
             aspectRatio: canvasAspect,
             width: canvasAspect >= 1 ? "100%" : undefined,
@@ -233,7 +242,7 @@ export function Preview({ src, token, sourceNodeID, mediaByID, timeline, playhea
         >
           {activeKind === "image" ? (
             <img
-              className="editor-preview-image"
+              className="h-full w-full bg-black object-contain"
               src={videoSrc}
               alt=""
               onLoad={(e) => {
@@ -244,6 +253,7 @@ export function Preview({ src, token, sourceNodeID, mediaByID, timeline, playhea
           ) : (
             <video
               ref={video}
+              className="h-full w-full bg-black object-contain"
               src={videoSrc}
               playsInline
               preload="auto"
@@ -289,7 +299,10 @@ export function Preview({ src, token, sourceNodeID, mediaByID, timeline, playhea
           {activeOverlays.map(({ clip, type }) => (
             <div
               key={clip.id}
-              className={`text-preview-overlay ${type}`}
+              className={cn(
+                "pointer-events-none absolute z-[3] max-w-[78%] whitespace-pre-wrap rounded-lg px-[0.45em] py-[0.2em] leading-tight [transform:translate(-50%,-50%)] [text-shadow:0_2px_10px_rgba(0,0,0,0.45)]",
+                type === "caption" && "max-w-[86%]",
+              )}
               style={{
                 left: `${Math.max(0, Math.min(1, clip.text?.x ?? 0.5)) * 100}%`,
                 top: `${Math.max(0, Math.min(1, clip.text?.y ?? 0.5)) * 100}%`,
@@ -303,12 +316,12 @@ export function Preview({ src, token, sourceNodeID, mediaByID, timeline, playhea
             </div>
           ))}
         </div>
-        <audio ref={audio} src={audioSrc} preload="auto" />
+        <audio ref={audio} src={audioSrc || undefined} preload="auto" />
       </div>
-      <div className="editor-preview-controls">
-        <button type="button" className="editor-tool-btn" onClick={togglePlayback} title={playing ? "Pause" : "Play"}>
-          <i className={`fa-solid ${playing ? "fa-pause" : "fa-play"}`} />
-        </button>
+      <div className="flex w-full items-center justify-center gap-3 border-t pt-3 font-mono text-xs text-muted-foreground">
+        <Button type="button" variant="ghost" size="icon-sm" onClick={togglePlayback} title={playing ? "Pause" : "Play"}>
+          {playing ? <Pause /> : <Play />}
+        </Button>
         <span>{playhead.toFixed(2)}s / {Math.max(timeline.duration, 0).toFixed(2)}s</span>
       </div>
     </section>

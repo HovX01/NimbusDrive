@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { fetchContactAvatarBlob, type TelegramContact } from "../api";
+import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import { cn } from "@/lib/utils";
 
 type Props = {
   token: string;
   contact: TelegramContact;
+  className?: string;
 };
 
-export function ContactAvatar({ token, contact }: Props) {
+export function ContactAvatar({ token, contact, className }: Props) {
   const [src, setSrc] = useState<string | null>(null);
   const initial = (contact.display_name.trim()[0] || "?").toUpperCase();
 
@@ -33,8 +36,9 @@ export function ContactAvatar({ token, contact }: Props) {
   }, [token, contact.id, contact.has_avatar]);
 
   return (
-    <span className="send-telegram-avatar" aria-hidden>
-      {src ? <img src={src} alt="" /> : initial}
-    </span>
+    <Avatar className={cn("h-10 w-10", className)}>
+      {src && <AvatarImage src={src} alt="" />}
+      <AvatarFallback>{initial}</AvatarFallback>
+    </Avatar>
   );
 }

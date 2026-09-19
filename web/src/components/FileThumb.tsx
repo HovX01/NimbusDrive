@@ -1,16 +1,27 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  Archive,
+  File as FileIcon,
+  FileImage,
+  FileText,
+  FileVideo,
+  Folder,
+  Music,
+  Play,
+} from "lucide-react";
 import { fetchThumbBlob } from "../api";
 import { previewKind, type PreviewKind } from "../lib/files";
+import { cn } from "@/lib/utils";
 
-const FA: Record<PreviewKind, string> = {
-  folder: "fa-solid fa-folder",
-  image: "fa-solid fa-image",
-  video: "fa-solid fa-film",
-  audio: "fa-solid fa-music",
-  pdf: "fa-solid fa-file-pdf",
-  text: "fa-solid fa-file-lines",
-  archive: "fa-solid fa-file-zipper",
-  file: "fa-solid fa-file",
+const ICON: Record<PreviewKind, typeof FileIcon> = {
+  folder: Folder,
+  image: FileImage,
+  video: FileVideo,
+  audio: Music,
+  pdf: FileText,
+  text: FileText,
+  archive: Archive,
+  file: FileIcon,
 };
 
 export function FileThumb({
@@ -89,24 +100,36 @@ export function FileThumb({
   }, [token, id, isFolder, kind]);
 
   const showMedia = (kind === "image" || kind === "video") && !!src && !failed;
+  const Icon = ICON[kind];
 
   return (
     <div
       ref={ref}
-      className={`file-badge kind-${kind} ${compact ? "compact" : ""} ${showMedia ? "has-media" : ""}`}
       aria-hidden
-    >
-      {showMedia && <img src={src!} alt="" className="thumb-media" />}
-      {showMedia && kind === "video" && (
-        <span className="thumb-play" aria-hidden>
-          <i className="fa-solid fa-play" />
-        </span>
+      className={cn(
+        "relative grid w-full place-items-center overflow-hidden bg-muted/60 text-muted-foreground",
+        compact ? "h-10 w-10 shrink-0 rounded-xl" : "aspect-[16/10] rounded-none",
+        showMedia && "bg-zinc-900 text-white",
+        isFolder && "bg-amber-50 text-amber-600",
       )}
-      {!showMedia && <i className={`${FA[kind]} fa-icon`} />}
+    >
+      {showMedia ? (
+        <>
+          <img src={src!} alt="" className="h-full w-full object-cover" loading="lazy" />
+          {kind === "video" && (
+            <span className="absolute bottom-1.5 left-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/70 text-white">
+              <Play className="h-3 w-3 fill-current" />
+            </span>
+          )}
+        </>
+      ) : (
+        <Icon className={cn(compact ? "h-4 w-4" : "h-7 w-7")} strokeWidth={1.75} />
+      )}
     </div>
   );
 }
 
-export function KindIcon({ kind }: { kind: PreviewKind }) {
-  return <i className={`${FA[kind]} fa-inline`} aria-hidden />;
+export function KindIcon({ kind, className }: { kind: PreviewKind; className?: string }) {
+  const Icon = ICON[kind];
+  return <Icon aria-hidden className={cn("h-3.5 w-3.5 text-muted-foreground", className)} />;
 }

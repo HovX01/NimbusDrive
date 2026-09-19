@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
+import { ChevronRight, Folder, FolderOpen, Loader2 } from "lucide-react";
 import { listFiles, type Node } from "../api";
-import { Portal } from "./Portal";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Skeleton } from "./ui/skeleton";
 
 type Crumb = { id: string; name: string };
 
@@ -42,64 +53,80 @@ export function MoveModal({ token, busy, count, excludeIds, onClose, onConfirm }
   }, [token, parentId, excludeIds]);
 
   return (
-    <Portal>
-      <div className="modal-backdrop" role="presentation" onClick={onClose}>
-        <div
-          className="modal note-modal move-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Move items"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <header className="modal-head">
-            <div>
-              <p className="eyebrow">Move to folder</p>
-              <h2>
-                {count} item{count === 1 ? "" : "s"}
-              </h2>
-              <p className="meta">Choose a destination folder.</p>
-            </div>
-            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
-              <i className="fa-solid fa-xmark" />
-            </button>
-          </header>
-          <div className="note-modal-body move-modal-body">
-            <div className="crumbs move-crumbs" aria-label="Folder path">
-              {trail.map((c, i) => (
-                <button key={c.id} type="button" className="crumb" onClick={() => setTrail(trail.slice(0, i + 1))}>
-                  {c.name}
-                </button>
-              ))}
-            </div>
-            {error && <p className="banner error compact">{error}</p>}
-            {loading ? (
-              <p className="meta">Loading folders…</p>
-            ) : folders.length === 0 ? (
-              <p className="meta">No subfolders here.</p>
-            ) : (
-              <ul className="move-folder-list">
-                {folders.map((f) => (
-                  <li key={f.id}>
-                    <button type="button" className="move-folder-row" onClick={() => setTrail([...trail, { id: f.id, name: f.name }])}>
-                      <i className="fa-solid fa-folder" />
-                      <span className="truncate">{f.name}</span>
-                      <i className="fa-solid fa-chevron-right move-folder-chevron" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>
+            Move {count} item{count === 1 ? "" : "s"}
+          </DialogTitle>
+          <DialogDescription>Choose a cozy new home for your files.</DialogDescription>
+        </DialogHeader>
+
+        <nav aria-label="Folder path" className="flex flex-wrap items-center gap-1 text-sm">
+          {trail.map((c, i) => (
+            <span key={c.id} className="flex items-center gap-1">
+              {i > 0 && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+              <button
+                type="button"
+                onClick={() => setTrail(trail.slice(0, i + 1))}
+                className="rounded-md px-1.5 py-0.5 font-medium text-muted-foreground hover:bg-muted hover:text-foreground aria-[current=true]:text-foreground"
+                aria-current={i === trail.length - 1}
+              >
+                {c.name}
+              </button>
+            </span>
+          ))}
+        </nav>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {loading ? (
+          <div className="grid gap-2">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex items-center gap-2.5">
+                <Skeleton className="h-9 w-9 rounded-xl" />
+                <Skeleton className="h-4 flex-1" />
+              </div>
+            ))}
           </div>
-          <footer className="modal-foot row end gap">
-            <button type="button" className="btn ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="btn-create" disabled={busy} onClick={() => onConfirm(parentId)}>
-              Move here
-            </button>
-          </footer>
-        </div>
-      </div>
-    </Portal>
+        ) : folders.length === 0 ? (
+          <p className="flex items-center gap-2 rounded-xl bg-muted/60 px-3.5 py-3 text-sm text-muted-foreground">
+            <FolderOpen className="h-4 w-4" /> No subfolders here — you can move right here.
+          </p>
+        ) : (
+          <ul className="grid max-h-[300px] gap-1 overflow-auto">
+            {folders.map((f) => (
+              <li key={f.id}>
+                <button
+                  type="button"
+                  onClick={() => setTrail([...trail, { id: f.id, name: f.name }])}
+                  className="flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors hover:bg-muted"
+                >
+                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-amber-100 text-amber-600">
+                    <Folder className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{f.name}</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={busy} onClick={() => onConfirm(parentId)}>
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            Move here
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

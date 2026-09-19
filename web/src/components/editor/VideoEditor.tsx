@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  Captions,
+  FileInput,
+  FileText,
+  Film,
+  Music,
+  Plus,
+  Redo2,
+  Scissors,
+  Share,
+  SlidersHorizontal,
+  Trash2,
+  Type,
+  Undo2,
+} from "lucide-react";
+import {
   captionExportUrl,
   createEditProject,
   importCaptions,
@@ -17,13 +33,15 @@ import {
   type TimelineTrack,
 } from "../../api";
 import { Portal } from "../Portal";
-import { ExportPanel } from "./ExportPanel";
-import { Inspector } from "./Inspector";
+import { ExportPanel } from "./ExportPanel";import { Inspector } from "./Inspector";
 import { MediaBin } from "./MediaBin";
 import { Preview } from "./Preview";
 import { Timeline } from "./Timeline";
 import { TextEditor } from "./TextEditor";
 import { previewKind } from "../../lib/files";
+import { cn } from "@/lib/utils";
+import { Alert, AlertDescription } from "../ui/alert";
+import { Button } from "../ui/button";
 
 type Props = {
   token: string;
@@ -486,19 +504,42 @@ export function VideoEditor({ token, node, onClose, onDone }: Props) {
 
   const streamUrl = useMemo(() => mediaStreamUrl(token, node.id), [token, node.id]);
 
+  const railItems: { id: "media" | "text" | "captions"; label: string; icon: typeof Film }[] = [
+    { id: "media", label: "Media", icon: Film },
+    { id: "text", label: "Text", icon: Type },
+    { id: "captions", label: "Captions", icon: Captions },
+  ];
+
+  const quickActions: { label: string; icon: typeof Film; onClick: () => void; disabled?: boolean; active?: boolean; primary?: boolean; title: string }[] = [
+    { label: "Media", icon: Plus, title: "Add media", active: mobilePanel === "media", onClick: () => { setActiveToolPanel("media"); setMobilePanel("media"); } },
+    { label: "Edit", icon: SlidersHorizontal, title: "Edit selected clip", active: mobilePanel === "properties", onClick: () => setMobilePanel("properties") },
+    { label: "Split", icon: Scissors, title: "Split at playhead", disabled: !selectedClip, onClick: splitSelected },
+    { label: "Text", icon: Type, title: "Add text", onClick: () => { addTextClip("text"); setMobilePanel("properties"); } },
+    { label: "Captions", icon: Captions, title: "Add captions", onClick: () => { addTextClip("caption"); setMobilePanel("properties"); } },
+    { label: "Import", icon: FileInput, title: "Import captions", onClick: () => { setActiveToolPanel("captions"); setMobilePanel("media"); } },
+    { label: "Audio", icon: Music, title: "Extract audio", disabled: !selectedClip?.sourceNodeId || selectedSourceKind !== "video", onClick: () => void extractSelectedClipAudio() },
+    { label: "Delete", icon: Trash2, title: "Delete selected clip", disabled: !selectedClip, onClick: deleteSelected },
+    { label: "Export", icon: Share, title: "Export video", primary: true, onClick: () => void openExport() },
+  ];
+
   return (
     <Portal>
-      <div className={`editor-shell mobile-show-${mobilePanel}`} role="dialog" aria-modal="true" aria-label={`Edit ${node.name}`}>
-        <header className="editor-toolbar">
-          <button type="button" className="editor-tool-btn" onClick={() => void requestClose()} title="Back to Drive">
-            <i className="fa-solid fa-arrow-left" />
-          </button>
-          <div className="editor-title-block">
-            <span className="editor-kicker">Edit Media</span>
-            <strong className="truncate">{project?.name ?? node.name}</strong>
-            <span className="editor-source-meta truncate">{probeSummary || "Autosaved project · Telegram-backed media"}</span>
+      <div
+        className="fixed inset-0 z-50 flex min-h-0 flex-col bg-background text-foreground"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Edit ${node.name}`}
+      >
+        <header className="flex shrink-0 items-center gap-3 border-b bg-card px-3 py-2.5 sm:px-4">
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => void requestClose()} title="Back to Drive">
+            <ArrowLeft />
+          </Button>
+          <div className="grid min-w-0 flex-1 gap-0.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Edit Media</span>
+            <strong className="truncate text-sm font-semibold leading-tight">{project?.name ?? node.name}</strong>
+            <span className="truncate text-xs text-muted-foreground">{probeSummary || "Autosaved project · Telegram-backed media"}</span>
           </div>
-          <div className="editor-toolbar-actions">
+          <div className="flex min-w-0 items-center gap-1.5">
             <input
               ref={captionInput}
               type="file"
@@ -509,217 +550,167 @@ export function VideoEditor({ token, node, onClose, onDone }: Props) {
                 if (file) void importSRT(file);
               }}
             />
-            <span className={`editor-save-state ${saveState}`}>{dirty ? saveState : saveState === "idle" ? "" : saveState}</span>
-            <button type="button" className="editor-tool-btn" disabled={!canUndo} onClick={undo} title="Undo">
-              <i className="fa-solid fa-rotate-left" />
-            </button>
-            <button type="button" className="editor-tool-btn" disabled={!canRedo} onClick={redo} title="Redo">
-              <i className="fa-solid fa-rotate-right" />
-            </button>
-            <button type="button" className="editor-export-btn" onClick={() => void openExport()}>
-              <i className="fa-solid fa-file-export" /> Export
-            </button>
+            {dirty && (
+              <span
+                className={cn(
+                  "hidden text-xs font-medium capitalize sm:inline",
+                  saveState === "error" ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Save failed" : "Editing…"}
+              </span>
+            )}
+            <Button type="button" variant="ghost" size="icon-sm" disabled={!canUndo} onClick={undo} title="Undo">
+              <Undo2 />
+            </Button>
+            <Button type="button" variant="ghost" size="icon-sm" disabled={!canRedo} onClick={redo} title="Redo">
+              <Redo2 />
+            </Button>
+            <Button type="button" size="sm" onClick={() => void openExport()}>
+              <Share /> <span className="hidden sm:inline">Export</span>
+            </Button>
           </div>
         </header>
 
         {error ? (
-          <div className="editor-empty">
-            <p>{error}</p>
+          <div className="grid flex-1 place-items-center p-6">
+            <Alert variant="destructive" className="max-w-md">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           </div>
         ) : (
-          <>
-            <nav className="editor-mobile-tabs" aria-label="Edit Media sections">
-              <button type="button" className={mobilePanel === "preview" ? "active" : ""} onClick={() => setMobilePanel("preview")}>
-                <i className="fa-solid fa-play" /> Preview
-              </button>
-              <button type="button" className={mobilePanel === "media" ? "active" : ""} onClick={() => setMobilePanel("media")}>
-                <i className="fa-solid fa-photo-film" /> Media
-              </button>
-              <button type="button" className={mobilePanel === "properties" ? "active" : ""} onClick={() => setMobilePanel("properties")}>
-                <i className="fa-solid fa-sliders" /> Edit
-              </button>
-              <button type="button" className={mobilePanel === "timeline" ? "active" : ""} onClick={() => setMobilePanel("timeline")}>
-                <i className="fa-solid fa-timeline" /> Timeline
-              </button>
-            </nav>
-            <main className="editor-main">
-              <aside className="editor-assets-panel">
-                <nav className="editor-mode-rail" aria-label="Editor tools">
-                  <button
-                    type="button"
-                    className={activeToolPanel === "media" ? "active" : ""}
-                    onClick={() => setActiveToolPanel("media")}
-                    title="Media assets"
-                  >
-                    <i className="fa-solid fa-photo-film" />
-                    <span>Media</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={activeToolPanel === "text" ? "active" : ""}
-                    onClick={() => setActiveToolPanel("text")}
-                    title="Text tools"
-                  >
-                    <i className="fa-solid fa-font" />
-                    <span>Text</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={activeToolPanel === "captions" ? "active" : ""}
-                    onClick={() => setActiveToolPanel("captions")}
-                    title="Caption tools"
-                  >
-                    <i className="fa-solid fa-closed-captioning" />
-                    <span>Captions</span>
-                  </button>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-2.5 lg:grid lg:grid-cols-[minmax(280px,21vw)_minmax(0,1fr)_minmax(300px,22vw)] lg:overflow-hidden">
+              <aside
+                className={cn(
+                  "min-h-0 overflow-hidden rounded-2xl border bg-card lg:grid lg:grid-cols-[58px_minmax(0,1fr)]",
+                  mobilePanel === "media" ? "grid" : "hidden lg:grid",
+                )}
+              >
+                <nav
+                  className="flex gap-1 border-b bg-muted/40 p-1.5 lg:flex-col lg:border-b-0 lg:border-r lg:p-2"
+                  aria-label="Editor tools"
+                >
+                  {railItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveToolPanel(item.id)}
+                      title={`${item.label} tools`}
+                      className={cn(
+                        "grid min-h-11 flex-1 place-items-center gap-1 rounded-xl border-0 bg-transparent text-[11px] font-semibold text-muted-foreground transition-colors lg:min-h-[52px] lg:flex-none",
+                        activeToolPanel === item.id ? "bg-card text-foreground shadow-xs" : "hover:bg-muted hover:text-foreground",
+                      )}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
                 </nav>
-                <div className="editor-tool-panel">
+                <div className="grid min-h-0 overflow-hidden">
                   {activeToolPanel === "media" && (
                     <MediaBin token={token} parentID={node.parent_id || "root"} onAdd={(media) => void addMediaClip(media)} onChanged={onDone} />
                   )}
                   {activeToolPanel === "text" && (
-                    <div className="editor-asset-toolbox">
-                      <div className="editor-panel-head">
-                        <div>
-                          <p className="editor-panel-title">Text</p>
-                          <p className="editor-muted">Add titles or labels over your video.</p>
+                    <div className="grid content-start gap-3 overflow-auto p-3.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">Text</p>
+                          <p className="text-xs text-muted-foreground">Add titles or labels over your video.</p>
                         </div>
                       </div>
-                      <button type="button" className="editor-create-card" onClick={() => addTextClip("text")}>
-                        <i className="fa-solid fa-font" />
-                        <span><strong>Title text</strong><small>Add editable overlay at playhead</small></span>
-                      </button>
-                      <button type="button" className="editor-create-card" onClick={() => addTextClip("caption")}>
-                        <i className="fa-solid fa-closed-captioning" />
-                        <span><strong>Quick caption</strong><small>Add subtitle-style text</small></span>
-                      </button>
+                      <Button type="button" variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal p-3.5 text-left" onClick={() => addTextClip("text")}>
+                        <Type className="h-4 w-4 shrink-0" />
+                        <span className="grid gap-0.5"><strong className="text-sm font-medium">Title text</strong><small className="text-xs text-muted-foreground">Add editable overlay at playhead</small></span>
+                      </Button>
+                      <Button type="button" variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal p-3.5 text-left" onClick={() => addTextClip("caption")}>
+                        <Captions className="h-4 w-4 shrink-0" />
+                        <span className="grid gap-0.5"><strong className="text-sm font-medium">Quick caption</strong><small className="text-xs text-muted-foreground">Add subtitle-style text</small></span>
+                      </Button>
                     </div>
                   )}
                   {activeToolPanel === "captions" && (
-                    <div className="editor-asset-toolbox">
-                      <div className="editor-panel-head">
-                        <div>
-                          <p className="editor-panel-title">Captions</p>
-                          <p className="editor-muted">Import or export SRT subtitles.</p>
+                    <div className="grid content-start gap-3 overflow-auto p-3.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">Captions</p>
+                          <p className="text-xs text-muted-foreground">Import or export SRT subtitles.</p>
                         </div>
                       </div>
-                      <button type="button" className="editor-create-card" disabled={captionBusy} onClick={() => captionInput.current?.click()}>
-                        <i className="fa-solid fa-file-import" />
-                        <span><strong>Import SRT</strong><small>Create caption clips from a subtitle file</small></span>
-                      </button>
+                      <Button type="button" variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal p-3.5 text-left" disabled={captionBusy} onClick={() => captionInput.current?.click()}>
+                        <FileInput className="h-4 w-4 shrink-0" />
+                        <span className="grid gap-0.5"><strong className="text-sm font-medium">Import SRT</strong><small className="text-xs text-muted-foreground">Create caption clips from a subtitle file</small></span>
+                      </Button>
                       {project && (
-                        <a className="editor-create-card" href={captionExportUrl(token, project.id)}>
-                          <i className="fa-solid fa-file-lines" />
-                          <span><strong>Export SRT</strong><small>Download captions from this project</small></span>
-                        </a>
+                        <Button asChild variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal p-3.5 text-left">
+                          <a href={captionExportUrl(token, project.id)}>
+                            <FileText className="h-4 w-4 shrink-0" />
+                            <span className="grid gap-0.5"><strong className="text-sm font-medium">Export SRT</strong><small className="text-xs text-muted-foreground">Download captions from this project</small></span>
+                          </a>
+                        </Button>
                       )}
                     </div>
                   )}
                 </div>
               </aside>
-              <Preview
-                src={streamUrl}
-                token={token}
-                sourceNodeID={node.id}
-                mediaByID={mediaByID}
-                timeline={timeline}
-                playhead={playhead}
-                playing={playing}
-                onPlayhead={setPlayhead}
-                onPlaying={setPlaying}
-                onDuration={setDuration}
-              />
-              {selectedTrack?.type === "text" || selectedTrack?.type === "caption" ? (
-                <TextEditor clip={selectedClip} kind={selectedTrack.type} onChange={updateClip} />
-              ) : (
-                <Inspector
-                  clip={selectedClip}
-                  sourceName={selectedSourceName}
-                  canExtractAudio={selectedSourceKind === "video"}
-                  extractAudioJob={clipAudioJob}
-                  onExtractAudio={() => void extractSelectedClipAudio()}
-                  onChange={updateClip}
+              <div className={cn("min-h-0", mobilePanel === "preview" || mobilePanel === "timeline" ? "block" : "hidden lg:block")}>
+                <Preview
+                  src={streamUrl}
+                  token={token}
+                  sourceNodeID={node.id}
+                  mediaByID={mediaByID}
+                  timeline={timeline}
+                  playhead={playhead}
+                  playing={playing}
+                  onPlayhead={setPlayhead}
+                  onPlaying={setPlaying}
+                  onDuration={setDuration}
                 />
-              )}
+              </div>
+              <div className={cn("min-h-0", mobilePanel === "properties" ? "block" : "hidden lg:block")}>
+                {selectedTrack?.type === "text" || selectedTrack?.type === "caption" ? (
+                  <TextEditor clip={selectedClip} kind={selectedTrack.type} onChange={updateClip} />
+                ) : (
+                  <Inspector
+                    clip={selectedClip}
+                    sourceName={selectedSourceName}
+                    canExtractAudio={selectedSourceKind === "video"}
+                    extractAudioJob={clipAudioJob}
+                    onExtractAudio={() => void extractSelectedClipAudio()}
+                    onChange={updateClip}
+                  />
+                )}
+              </div>
             </main>
-            <nav className="editor-quick-actions" aria-label="Editing shortcuts">
-              <button
-                type="button"
-                className={mobilePanel === "media" ? "active" : ""}
-                onClick={() => {
-                  setActiveToolPanel("media");
-                  setMobilePanel("media");
-                }}
-                title="Add media"
-              >
-                <i className="fa-solid fa-plus" />
-                <span>Media</span>
-              </button>
-              <button
-                type="button"
-                className={mobilePanel === "properties" ? "active" : ""}
-                onClick={() => setMobilePanel("properties")}
-                title="Edit selected clip"
-              >
-                <i className="fa-solid fa-sliders" />
-                <span>Edit</span>
-              </button>
-              <button type="button" onClick={splitSelected} disabled={!selectedClip} title="Split at playhead">
-                <i className="fa-solid fa-scissors" />
-                <span>Split</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  addTextClip("text");
-                  setMobilePanel("properties");
-                }}
-                title="Add text"
-              >
-                <i className="fa-solid fa-font" />
-                <span>Text</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  addTextClip("caption");
-                  setMobilePanel("properties");
-                }}
-                title="Add captions"
-              >
-                <i className="fa-solid fa-closed-captioning" />
-                <span>Captions</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveToolPanel("captions");
-                  setMobilePanel("media");
-                }}
-                title="Import captions"
-              >
-                <i className="fa-solid fa-file-import" />
-                <span>Import</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => void extractSelectedClipAudio()}
-                disabled={!selectedClip?.sourceNodeId || selectedSourceKind !== "video"}
-                title="Extract audio"
-              >
-                <i className="fa-solid fa-music" />
-                <span>Audio</span>
-              </button>
-              <button type="button" onClick={deleteSelected} disabled={!selectedClip} title="Delete selected clip">
-                <i className="fa-solid fa-trash" />
-                <span>Delete</span>
-              </button>
-              <button type="button" className="primary" onClick={() => void openExport()} title="Export video">
-                <i className="fa-solid fa-file-export" />
-                <span>Export</span>
-              </button>
+
+            <nav
+              className="flex shrink-0 gap-1 overflow-x-auto border-t bg-card px-2 py-1.5 lg:hidden"
+              aria-label="Editing shortcuts"
+            >
+              {quickActions.map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={action.onClick}
+                  disabled={action.disabled}
+                  title={action.title}
+                  className={cn(
+                    "grid min-h-[52px] min-w-[60px] flex-1 place-items-center gap-0.5 rounded-xl border border-transparent px-2 text-[11px] font-semibold transition-colors",
+                    action.primary
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                      : action.active
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    action.disabled && "cursor-not-allowed opacity-40",
+                  )}
+                >
+                  <action.icon className="h-4 w-4" />
+                  <span>{action.label}</span>
+                </button>
+              ))}
             </nav>
-            <div className="editor-timeline-wrap">
+
+            <div className="block min-h-0 shrink-0">
               <Timeline
                 timeline={timeline}
                 selectedClipID={selectedClipID}
@@ -732,7 +723,7 @@ export function VideoEditor({ token, node, onClose, onDone }: Props) {
                 onDelete={deleteSelected}
               />
             </div>
-          </>
+          </div>
         )}
 
         {exportOpen && project && (

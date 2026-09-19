@@ -1,9 +1,30 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
+import {
+  Download,
+  ExternalLink,
+  Film,
+  FolderInput,
+  Link2,
+  MoreVertical,
+  PenLine,
+  Scissors,
+  Send,
+  Trash2,
+} from "lucide-react";
 import type { Node as DriveNode } from "../api";
 import { isNodeDrag, readNodeDragData, setNodeDragData } from "../lib/drag";
 import { previewKind } from "../lib/files";
+import { cn } from "@/lib/utils";
 import { FileThumb, KindIcon } from "./FileThumb";
-import { Portal } from "./Portal";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 type Props = {
   token: string;
@@ -29,8 +50,6 @@ type Props = {
   dragIds?: string[];
 };
 
-type MenuPos = { top: number; left: number; openUp: boolean };
-
 export function DriveCard({
   token,
   node,
@@ -54,69 +73,17 @@ export function DriveCard({
   onDragMove,
   dragIds,
 }: Props) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<MenuPos | null>(null);
   const [dropOver, setDropOver] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const moreRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const kind = previewKind(node.name, node.mime_type, node.type === "folder");
 
   const canDrag = movable && !trashMode;
   const canDrop = dropTarget && node.type === "folder" && !trashMode;
 
-  function placeMenu() {
-    const btn = moreRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    const menuW = 200;
-    const gap = 6;
-    const spaceBelow = window.innerHeight - r.bottom;
-    const openUp = spaceBelow < 280 && r.top > spaceBelow;
-    let left = r.right - menuW;
-    left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
-    const top = openUp ? r.top - gap : r.bottom + gap;
-    setMenuPos({ top, left, openUp });
-  }
-
-  useLayoutEffect(() => {
-    if (!menuOpen) {
-      setMenuPos(null);
-      return;
-    }
-    placeMenu();
-  }, [menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
-    }
-    function onReposition() {
-      placeMenu();
-    }
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onReposition);
-    window.addEventListener("scroll", onReposition, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onReposition);
-      window.removeEventListener("scroll", onReposition, true);
-    };
-  }, [menuOpen]);
-
-  function run(action: () => void) {
-    setMenuOpen(false);
-    action();
-  }
-
   return (
     <article
-      className={`drive-card ${selected ? "selected" : ""} ${dropOver ? "drop-target" : ""} ${menuOpen ? "menu-open" : ""}`}
-      ref={wrapRef}
-      draggable={canDrag && !menuOpen}
+      draggable={canDrag}
       onDragStart={(e) => {
-        if (!canDrag || menuOpen) return;
+        if (!canDrag) return;
         const ids = dragIds?.length ? dragIds : [node.id];
         setNodeDragData(e.nativeEvent, ids);
       }}
@@ -136,44 +103,112 @@ export function DriveCard({
         const ids = readNodeDragData(e.nativeEvent).filter((id) => id !== node.id);
         if (ids.length) onDragMove?.(ids);
       }}
+      className={cn(
+        "group relative flex flex-col overflow-hidden rounded-2xl border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
+        selected ? "border-sky-600 ring-2 ring-sky-600/25" : "border-border/80",
+        dropOver && "border-sky-600 bg-sky-50 ring-2 ring-sky-600/30",
+      )}
     >
-      <div className="drive-card-head">
-        <label
-          className={`drive-check ${selectionMode || selected ? "visible" : ""}`}
+      <div className="flex min-h-[52px] items-center gap-1.5 bg-muted/40 py-1.5 pl-2 pr-1.5">
+        <span
+          className={cn(
+            "grid h-7 w-7 shrink-0 place-items-center transition-opacity",
+            selectionMode || selected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
           onClick={(e) => e.stopPropagation()}
         >
-          <input
-            type="checkbox"
+          <Checkbox
             checked={selected}
-            onChange={onToggleSelect}
+            onCheckedChange={onToggleSelect}
             aria-label={`Select ${node.name}`}
           />
-        </label>
-        <button type="button" className="drive-card-title" onClick={onOpen} title={node.name}>
+        </span>
+        <button
+          type="button"
+          onClick={onOpen}
+          title={node.name}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-muted/60"
+        >
           <KindIcon kind={kind} />
-          <span className="drive-card-title-text">
-            <span className="truncate">{node.name}</span>
-            {subtitle ? <span className="drive-card-sub truncate">{subtitle}</span> : null}
+          <span className="grid min-w-0 flex-1">
+            <span className="truncate text-[13px] font-semibold tracking-tight">{node.name}</span>
+            {subtitle && <span className="truncate text-xs text-muted-foreground">{subtitle}</span>}
           </span>
         </button>
-        <button
-          ref={moreRef}
-          type="button"
-          className={`drive-card-more ${menuOpen ? "open" : ""}`}
-          aria-label={`Actions for ${node.name}`}
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-          onClick={(e) => {
-            e.stopPropagation();
-            setMenuOpen((v) => !v);
-          }}
-        >
-          <i className="fa-solid fa-ellipsis-vertical" />
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Actions for ${node.name}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {!trashMode && (
+              <DropdownMenuItem onSelect={onOpen}>
+                <ExternalLink /> Open
+              </DropdownMenuItem>
+            )}
+            {!trashMode && node.type === "file" && (
+              <DropdownMenuItem onSelect={onDownload}>
+                <Download /> Download
+              </DropdownMenuItem>
+            )}
+            {!trashMode && node.type === "file" && (
+              <DropdownMenuItem onSelect={onShare}>
+                <Link2 /> Share link
+              </DropdownMenuItem>
+            )}
+            {!trashMode && node.type === "file" && (
+              <DropdownMenuItem onSelect={onSendTelegram}>
+                <Send /> Send to Telegram
+              </DropdownMenuItem>
+            )}
+            {!trashMode && node.type === "file" && onMediaStudio && (
+              <DropdownMenuItem onSelect={onMediaStudio}>
+                <Film /> Media Studio
+              </DropdownMenuItem>
+            )}
+            {!trashMode && (kind === "video" || kind === "image") && onEditVideo && (
+              <DropdownMenuItem onSelect={onEditVideo}>
+                <Scissors /> Edit media
+              </DropdownMenuItem>
+            )}
+            {!trashMode && (
+              <DropdownMenuItem onSelect={onMove}>
+                <FolderInput /> Move to…
+              </DropdownMenuItem>
+            )}
+            {!trashMode && (
+              <DropdownMenuItem onSelect={onRename}>
+                <PenLine /> Rename
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            {trashMode ? (
+              <DropdownMenuItem
+                onSelect={onPurge}
+                className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+              >
+                <Trash2 /> Delete forever
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                onSelect={onDelete}
+                className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+              >
+                <Trash2 /> Move to trash
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
       <button
         type="button"
-        className="drive-card-body"
         onClick={(e) => {
           if (e.metaKey || e.ctrlKey || selectionMode) {
             onToggleSelect();
@@ -182,10 +217,10 @@ export function DriveCard({
           onOpen();
         }}
         aria-label={selectionMode ? `Select ${node.name}` : `Open ${node.name}`}
+        className="relative block w-full cursor-pointer overflow-hidden border-t bg-card text-left"
       >
         {!trashMode && (kind === "video" || kind === "image") && onEditVideo && (
           <span
-            className="drive-video-edit-badge"
             role="button"
             tabIndex={0}
             onClick={(e) => {
@@ -198,8 +233,9 @@ export function DriveCard({
               e.stopPropagation();
               onEditVideo();
             }}
+            className="absolute bottom-2.5 left-2.5 z-10 inline-flex items-center gap-1.5 rounded-lg bg-zinc-900/85 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur transition-colors hover:bg-sky-600"
           >
-            <i className="fa-solid fa-scissors" aria-hidden /> Edit Media
+            <Scissors className="h-3 w-3" /> Edit
           </span>
         )}
         <FileThumb
@@ -210,76 +246,6 @@ export function DriveCard({
           isFolder={node.type === "folder"}
         />
       </button>
-
-      {menuOpen && menuPos && (
-        <Portal>
-          <div className="drive-card-menu-layer">
-            <button
-              type="button"
-              className="drive-card-menu-scrim"
-              aria-label="Close menu"
-              onClick={() => setMenuOpen(false)}
-            />
-            <div
-              ref={menuRef}
-              className={`drive-card-menu ${menuPos.openUp ? "open-up" : ""}`}
-              role="menu"
-              style={{ top: menuPos.top, left: menuPos.left }}
-            >
-              {!trashMode && (
-                <button type="button" role="menuitem" onClick={() => run(onOpen)}>
-                  <i className="fa-solid fa-arrow-up-right-from-square" /> Open
-                </button>
-              )}
-              {!trashMode && node.type === "file" && (
-                <button type="button" role="menuitem" onClick={() => run(onDownload)}>
-                  <i className="fa-solid fa-download" /> Download
-                </button>
-              )}
-              {!trashMode && node.type === "file" && (
-                <button type="button" role="menuitem" onClick={() => run(onShare)}>
-                  <i className="fa-solid fa-link" /> Share link
-                </button>
-              )}
-              {!trashMode && node.type === "file" && (
-                <button type="button" role="menuitem" onClick={() => run(onSendTelegram)}>
-                  <i className="fa-solid fa-paper-plane" /> Send to Telegram
-                </button>
-              )}
-              {!trashMode && node.type === "file" && onMediaStudio && (
-                <button type="button" role="menuitem" onClick={() => run(onMediaStudio)}>
-                  <i className="fa-solid fa-film" /> Media Studio
-                </button>
-              )}
-              {!trashMode && (kind === "video" || kind === "image") && onEditVideo && (
-                <button type="button" role="menuitem" onClick={() => run(onEditVideo)}>
-                  <i className="fa-solid fa-scissors" /> Edit Media
-                </button>
-              )}
-              {!trashMode && (
-                <button type="button" role="menuitem" onClick={() => run(onMove)}>
-                  <i className="fa-solid fa-folder-tree" /> Move to…
-                </button>
-              )}
-              {!trashMode && (
-                <button type="button" role="menuitem" onClick={() => run(onRename)}>
-                  <i className="fa-solid fa-pen" /> Rename
-                </button>
-              )}
-              <div className="drive-card-menu-sep" />
-              {trashMode ? (
-                <button type="button" role="menuitem" className="danger" onClick={() => run(onPurge)}>
-                  <i className="fa-solid fa-trash" /> Delete forever
-                </button>
-              ) : (
-                <button type="button" role="menuitem" className="danger" onClick={() => run(onDelete)}>
-                  <i className="fa-solid fa-trash" /> Move to trash
-                </button>
-              )}
-            </div>
-          </div>
-        </Portal>
-      )}
     </article>
   );
 }

@@ -1,6 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Boxes,
+  ChevronRight,
+  CloudDownload,
+  CloudUpload,
+  Download,
+  Ellipsis,
+  Film,
+  FolderInput,
+  FolderOpen,
+  FolderPlus,
+  HardDrive,
+  KeyRound,
+  LayoutGrid,
+  Link2,
+  List as ListIcon,
+  LogOut,
+  Menu,
+  Move,
+  PenLine,
+  Plus,
+  Scissors,
+  Search,
+  SearchX,
+  Send,
+  Settings2,
+  StickyNote,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { searchFiles, type Node, type SearchHit, type User } from "../api";
 import { formatBytes, isPreviewable, previewKind } from "../lib/files";
+import { cn } from "@/lib/utils";
 import { BrandMark } from "./BrandMark";
 import { DriveCard } from "./DriveCard";
 import { FileThumb, KindIcon } from "./FileThumb";
@@ -11,12 +43,31 @@ import { MoveModal } from "./MoveModal";
 import { MediaStudioModal } from "./MediaStudioModal";
 import { VideoEditor } from "./editor/VideoEditor";
 import { UserBadge } from "./UserBadge";
+import { SettingsPage } from "./SettingsPage";
+import { S3BucketsPage } from "./S3BucketsPage";
 import { isFileDrag, isNodeDrag, readNodeDragData, setNodeDragData } from "../lib/drag";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Checkbox } from "./ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { Input } from "./ui/input";
+import { Separator } from "./ui/separator";
+import { Skeleton } from "./ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type Crumb = { id: string; name: string };
 type ViewMode = "grid" | "list";
 
-type Section = "drive" | "trash";
+type Section = "drive" | "trash" | "settings" | "buckets";
 
 type Props = {
   token: string;
@@ -38,8 +89,6 @@ type Props = {
     onProgress?: (p: { progress: number; message: string }) => void,
   ) => Promise<void>;
   onImportURL: (urls: string[]) => Promise<void>;
-  onOpenSettings: () => void;
-  onOpenS3Buckets: () => void;
   onUpload: (files: FileList | File[]) => void;
   onDownload: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -53,7 +102,6 @@ type Props = {
   onRefresh: () => void | Promise<void>;
   onLogout: () => void;
   onClearError: () => void;
-  /** Prefill Fetch when shared from another app (X, etc.). */
   sharedFetchUrl?: string | null;
   onSharedFetchConsumed?: () => void;
 };
@@ -84,8 +132,6 @@ export function DriveShell(props: Props) {
     onMkdir,
     onFetchURL,
     onImportURL,
-    onOpenSettings,
-    onOpenS3Buckets,
     onUpload,
     onDownload,
     onRename,
@@ -104,7 +150,7 @@ export function DriveShell(props: Props) {
   } = props;
   const trashMode = section === "trash";
 
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useState<ViewMode>("list");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -375,393 +421,387 @@ export function DriveShell(props: Props) {
           ? `${displayed.length} result${displayed.length === 1 ? "" : "s"}`
           : `${displayed.length} item${displayed.length === 1 ? "" : "s"}`;
 
+  function goDrive() {
+    onSectionChange("drive");
+    onCrumb(0);
+    setQuery("");
+    setHits(null);
+    setMenuOpen(false);
+  }
+
+  function goTrash() {
+    onSectionChange("trash");
+    setQuery("");
+    setHits(null);
+    setMenuOpen(false);
+  }
+
+  const navItems = [
+    { id: "drive", label: "My Drive", icon: HardDrive, active: section === "drive", run: goDrive },
+    { id: "trash", label: "Trash", icon: Trash2, active: section === "trash", run: goTrash },
+    { id: "api", label: "Storage API", icon: KeyRound, active: section === "settings", run: () => { onSectionChange("settings"); setQuery(""); setHits(null); setMenuOpen(false); } },
+    { id: "s3", label: "S3 Buckets", icon: Boxes, active: section === "buckets", run: () => { onSectionChange("buckets"); setQuery(""); setHits(null); setMenuOpen(false); } },
+  ];
+
   return (
-    <div className="drive-app">
-      <aside className={`sidebar ${menuOpen ? "open" : ""}`} aria-label="Sidebar">
-        <div className="sidebar-top">
-          <BrandMark />
-          <button
-            type="button"
-            className="icon-btn menu-toggle open mobile-only"
-            aria-label="Close menu"
-            onClick={() => setMenuOpen(false)}
-          >
-            <span className="menu-toggle-icon" aria-hidden>
-              <span />
-              <span />
-              <span />
-            </span>
-          </button>
-        </div>
-        <nav className="side-nav">
-          <button
-            type="button"
-            className={`nav-item ${section === "drive" ? "active" : ""}`}
-            onClick={() => {
-              onSectionChange("drive");
-              onCrumb(0);
-              setQuery("");
-              setHits(null);
-              setMenuOpen(false);
-            }}
-          >
-            <i className="fa-solid fa-hard-drive" />
-            <span>My Drive</span>
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${section === "trash" ? "active" : ""}`}
-            onClick={() => {
-              onSectionChange("trash");
-              setQuery("");
-              setHits(null);
-              setMenuOpen(false);
-            }}
-          >
-            <i className="fa-solid fa-trash" />
-            <span>Trash</span>
-          </button>
-          <button
-            type="button"
-            className="nav-item"
-            onClick={() => {
-              onOpenSettings();
-              setMenuOpen(false);
-            }}
-          >
-            <i className="fa-solid fa-code" />
-            <span>Storage API</span>
-          </button>
-          <button
-            type="button"
-            className="nav-item"
-            onClick={() => {
-              onOpenS3Buckets();
-              setMenuOpen(false);
-            }}
-          >
-            <i className="fa-solid fa-cube" />
-            <span>S3 Buckets</span>
-          </button>
-        </nav>
-        <div className="side-foot">
-          <UserBadge token={token} user={user} />
-          <button type="button" className="btn ghost compact" onClick={onLogout}>
-            Sign out
-          </button>
-        </div>
-      </aside>
-      {menuOpen && (
-        <button
-          type="button"
-          className="sidebar-scrim mobile-only"
-          aria-label="Close menu"
-          onClick={() => setMenuOpen(false)}
-        />
-      )}
-
-      <div className="drive-main">
-        <header className="topbar">
-          <button
-            type="button"
-            className={`icon-btn menu-toggle mobile-only ${menuOpen ? "open" : ""}`}
-            aria-label={menuOpen ? "Close menu" : "Open menu"}
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((o) => !o)}
-          >
-            <span className="menu-toggle-icon" aria-hidden>
-              <span />
-              <span />
-              <span />
-            </span>
-          </button>
-          <div className="search-wrap">
-            <label className="sr-only" htmlFor="drive-search">
-              Search
-            </label>
-            <i className="fa-solid fa-magnifying-glass search-icon" aria-hidden />
-            <input
-              id="drive-search"
-              className="search"
-              placeholder="Search"
-              value={query}
-              disabled={trashMode}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {query && (
-              <button
-                type="button"
-                className="search-clear"
-                aria-label="Clear search"
-                onClick={() => {
-                  setQuery("");
-                  setHits(null);
-                }}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
-            )}
+    <TooltipProvider>
+      <div className="grid min-h-full bg-background lg:grid-cols-[260px_minmax(0,1fr)]">
+        {/* Sidebar */}
+        <aside
+          aria-label="Sidebar"
+          className={cn(
+            "flex-col gap-2 border-r bg-card p-3 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:overflow-auto",
+            menuOpen ? "fixed inset-y-0 left-0 z-50 flex w-[280px] shadow-xl" : "hidden",
+          )}
+        >
+          <div className="flex items-center justify-between px-1.5 py-1">
+            <BrandMark />
+            <Button variant="ghost" size="icon-sm" className="lg:hidden" aria-label="Close menu" onClick={() => setMenuOpen(false)}>
+              <X className="h-4 w-4" />
+            </Button>
           </div>
-          <div className="top-actions">
-            <div className="segmented" role="group" aria-label="View mode">
+          <nav className="grid gap-0.5" aria-label="Primary">
+            <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Files</p>
+            {navItems.slice(0, 2).map((item) => (
               <button
+                key={item.id}
                 type="button"
-                className={view === "grid" ? "active" : ""}
-                aria-label="Grid view"
-                onClick={() => setView("grid")}
+                onClick={item.run}
+                aria-current={item.active ? "page" : undefined}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+                  item.active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                )}
               >
-                <i className="fa-solid fa-border-all" />
-                <span className="hide-sm">Grid</span>
-              </button>
-              <button
-                type="button"
-                className={view === "list" ? "active" : ""}
-                aria-label="List view"
-                onClick={() => setView("list")}
-              >
-                <i className="fa-solid fa-list" />
-                <span className="hide-sm">List</span>
-              </button>
-            </div>
-            <button type="button" className="btn ghost" disabled={busy || searchingMode || trashMode} onClick={onMkdir}>
-              <i className="fa-solid fa-folder-plus" />
-              <span className="hide-sm">New folder</span>
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={busy || searchingMode || trashMode}
-              onClick={() => setNoteOpen(true)}
-            >
-              <i className="fa-solid fa-note-sticky" />
-              <span className="hide-sm">Note</span>
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={busy || searchingMode || trashMode}
-              onClick={() => setFetchOpen(true)}
-            >
-              <i className="fa-solid fa-cloud-arrow-down" />
-              <span className="hide-sm">Fetch</span>
-            </button>
-            <button
-              type="button"
-              className="btn-create"
-              disabled={busy || searchingMode || trashMode}
-              onClick={() => fileInput.current?.click()}
-            >
-              <span>
-                <svg height={24} width={24} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                  <path d="M0 0h24v24H0z" fill="none" />
-                  <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" fill="currentColor" />
-                </svg>
-                Upload
-              </span>
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                if (e.target.files?.length) onUpload(e.target.files);
-                e.target.value = "";
-              }}
-            />
-          </div>
-        </header>
-
-        {!searchingMode && !trashMode && trail.length > 1 && (
-          <div className="crumbs" aria-label="Breadcrumb">
-            {trail.map((c, i) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`crumb ${crumbDrop === i ? "drop-target" : ""}`}
-                onClick={() => onCrumb(i)}
-                onDragOver={(e) => {
-                  if (!isNodeDrag(e.nativeEvent)) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  setCrumbDrop(i);
-                }}
-                onDragLeave={() => setCrumbDrop((v) => (v === i ? null : v))}
-                onDrop={(e) => {
-                  if (!isNodeDrag(e.nativeEvent)) return;
-                  e.preventDefault();
-                  setCrumbDrop(null);
-                  const ids = readNodeDragData(e.nativeEvent);
-                  if (ids.length) void dragMove(ids, c.id);
-                }}
-              >
-                {c.name}
+                <item.icon className="h-4 w-4" />
+                {item.label}
               </button>
             ))}
+          </nav>
+          <nav className="grid gap-0.5" aria-label="Storage">
+            <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Storage</p>
+            {navItems.slice(2).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={item.run}
+                aria-current={item.active ? "page" : undefined}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+                  item.active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                )}
+              >
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="mt-auto grid gap-2 border-t pt-3">
+            <UserBadge token={token} user={user} />
+            <Button variant="ghost" size="sm" className="justify-start text-muted-foreground" onClick={onLogout}>
+              <LogOut /> Sign out
+            </Button>
           </div>
+        </aside>
+        {menuOpen && (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-xs lg:hidden"
+            aria-label="Close menu"
+            onClick={() => setMenuOpen(false)}
+          />
         )}
 
-        <div className="page-head">
-          <div>
-            <h1 className="page-title">{pageTitle}</h1>
-            <p className="meta">{pageMeta}</p>
+        {/* Main */}
+        <div className="flex min-w-0 flex-col px-4 pb-28 pt-4 sm:px-6 lg:pb-10">
+          <div className="mb-3 flex items-center gap-2 lg:hidden">
+            <Button variant="outline" size="icon" aria-label="Open menu" onClick={() => setMenuOpen((o) => !o)}>
+              <Menu className="h-4 w-4" />
+            </Button>
+            <BrandMark />
           </div>
-          {trashMode && displayed.length > 0 && (
-            <div className="selection-bar" role="toolbar" aria-label="Trash actions">
-              <button type="button" className="btn danger-ghost compact" disabled={busy} onClick={onEmptyTrash}>
-                <i className="fa-solid fa-trash" /> Empty trash
-              </button>
-            </div>
-          )}
-          {selectionMode && !trashMode && (
-            <div className="selection-bar" role="toolbar" aria-label="Selection actions">
-              <button type="button" className="btn ghost compact" onClick={clearSelection}>
-                Clear
-              </button>
-              <button
-                type="button"
-                className="btn ghost compact"
-                onClick={allFilteredSelected ? clearSelection : selectAllFiltered}
-              >
-                {allFilteredSelected ? "Deselect all" : "Select all"}
-              </button>
-              <button
-                type="button"
-                className="btn ghost compact"
-                disabled={busy}
-                onClick={() => openMove(Array.from(selected))}
-              >
-                <i className="fa-solid fa-folder-tree" /> Move ({selectedCount})
-              </button>
-              <button
-                type="button"
-                className="btn danger-ghost compact"
-                disabled={busy}
-                onClick={() => onDeleteMany(Array.from(selected))}
-              >
-                <i className="fa-solid fa-trash" /> Delete ({selectedCount})
-              </button>
-            </div>
-          )}
-        </div>
-
-        {error && (
-          <div className="banner error" role="alert">
-            <span>{error}</span>
-            <button type="button" className="linkish" onClick={onClearError}>
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        <section className={`dropzone ${dragOver ? "over" : ""}`}>
-          {dragOver && !searchingMode && (
-            <div className="drop-overlay" aria-hidden>
-              <i className="fa-solid fa-cloud-arrow-up" />
-              <strong>Drop files to upload</strong>
-            </div>
-          )}
-          {(busy && items.length === 0 && !searchingMode) ||
-          (searching && searchingMode && hits === null) ? (
-            <div className="grid-skel" aria-busy="true">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="skeleton card-skel" />
-              ))}
-            </div>
-          ) : displayed.length === 0 ? (
-            <div className="empty-panel">
-              <i
-                className={`fa-regular ${searchingMode ? "fa-magnifying-glass" : "fa-folder-open"} empty-ico`}
+          {section === "settings" ? (
+            <SettingsPage token={token} />
+          ) : section === "buckets" ? (
+            <S3BucketsPage token={token} />
+          ) : (
+          <>
+          <header className="mb-3 hidden flex-wrap items-center gap-2.5 lg:flex">
+            <div className="relative min-w-0 max-w-[540px] flex-1">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="drive-search"
+                placeholder={trashMode ? "Trash isn’t searchable" : "Search your cozy drive…"}
+                value={query}
+                disabled={trashMode}
+                onChange={(e) => setQuery(e.target.value)}
+                className="rounded-full bg-card pl-10 pr-10 shadow-xs"
               />
-              <h2>{trashMode ? "Trash is empty" : searchingMode ? "No results" : "This folder is empty"}</h2>
-              <p className="meta">
-                {trashMode
-                  ? "Deleted files and folders appear here."
-                  : searchingMode
-                  ? `Nothing matched “${query.trim()}”.`
-                  : "Upload files or create a folder to get started."}
-              </p>
-              {!searchingMode && !trashMode && (
-                <div className="row gap">
-                  <button type="button" className="btn-create" onClick={() => fileInput.current?.click()}>
-                    <span>
-                      <svg height={24} width={24} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                        <path d="M0 0h24v24H0z" fill="none" />
-                        <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" fill="currentColor" />
-                      </svg>
-                      Upload
-                    </span>
-                  </button>
-                  <button type="button" className="btn ghost" onClick={onMkdir}>
-                    New folder
-                  </button>
-                  <button type="button" className="btn ghost" onClick={() => setNoteOpen(true)}>
-                    Quick note
-                  </button>
-                  <button type="button" className="btn ghost" onClick={() => setFetchOpen(true)}>
-                    Fetch link
-                  </button>
-                </div>
+              {query && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setQuery("");
+                    setHits(null);
+                  }}
+                  className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
-          ) : view === "grid" ? (
-            <ul className="file-grid">
-              {displayed.map((n) => (
-                <li key={n.id}>
-                  <DriveCard
-                    token={token}
-                    node={n}
-                    trashMode={trashMode}
-                    movable={!searchingMode}
-                    dropTarget={!searchingMode}
-                    selected={selected.has(n.id)}
-                    selectionMode={selectionMode}
-                    subtitle={searchingMode ? locationLabel(pathById.get(n.id) ?? []) : undefined}
-                    dragIds={selected.has(n.id) && selectionMode ? Array.from(selected) : [n.id]}
-                    onOpen={() => openNode(n)}
-                    onToggleSelect={() => toggleSelect(n.id)}
-                    onRename={() => onRename(n.id, n.name)}
-                    onMove={() => openMove(selected.has(n.id) && selectionMode ? Array.from(selected) : [n.id])}
-                    onDownload={() => onDownload(n.id)}
-                    onDelete={() => onDelete(n.id)}
-                    onPurge={() => onPurge(n.id)}
-                    onShare={() => onShare(n.id, n.name)}
-                    onSendTelegram={() => onSendTelegram(n.id, n.name)}
-                    onMediaStudio={() => setMediaNode(n)}
-                    onEditVideo={() => setEditVideoNode(n)}
-                    onDragMove={(ids) => void dragMove(ids, n.id)}
-                  />
-                </li>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="inline-flex rounded-full border bg-card p-0.5 shadow-xs" role="group" aria-label="View mode">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="Grid view"
+                      onClick={() => setView("grid")}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium transition-colors",
+                        view === "grid" ? "bg-muted shadow-xs" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <LayoutGrid className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Grid</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Grid view</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="List view"
+                      onClick={() => setView("list")}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium transition-colors",
+                        view === "list" ? "bg-muted shadow-xs" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <ListIcon className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">List</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>List view</TooltipContent>
+                </Tooltip>
+              </div>
+              <Button variant="outline" disabled={busy || searchingMode || trashMode} onClick={onMkdir}>
+                <FolderPlus />
+                <span className="hidden sm:inline">New folder</span>
+              </Button>
+              <Button variant="outline" disabled={busy || searchingMode || trashMode} onClick={() => setNoteOpen(true)}>
+                <StickyNote />
+                <span className="hidden sm:inline">Note</span>
+              </Button>
+              <Button variant="outline" disabled={busy || searchingMode || trashMode} onClick={() => setFetchOpen(true)}>
+                <CloudDownload />
+                <span className="hidden sm:inline">Fetch</span>
+              </Button>
+              <Button disabled={busy || searchingMode || trashMode} onClick={() => fileInput.current?.click()}>
+                <Upload /> Upload
+              </Button>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.length) onUpload(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </div>
+          </header>
+
+          {!searchingMode && !trashMode && trail.length > 1 && (
+            <nav className="mb-2 flex max-w-full items-center gap-0.5 overflow-x-auto pb-1" aria-label="Breadcrumb">
+              {trail.map((c, i) => (
+                <span key={c.id} className="flex shrink-0 items-center gap-0.5">
+                  {i > 0 && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />}
+                  <button
+                    type="button"
+                    onClick={() => onCrumb(i)}
+                    onDragOver={(e) => {
+                      if (!isNodeDrag(e.nativeEvent)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setCrumbDrop(i);
+                    }}
+                    onDragLeave={() => setCrumbDrop((v) => (v === i ? null : v))}
+                    onDrop={(e) => {
+                      if (!isNodeDrag(e.nativeEvent)) return;
+                      e.preventDefault();
+                      setCrumbDrop(null);
+                      const ids = readNodeDragData(e.nativeEvent);
+                      if (ids.length) void dragMove(ids, c.id);
+                    }}
+                    className={cn(
+                      "rounded-lg px-2 py-1 text-sm font-medium transition-colors",
+                      i === trail.length - 1 ? "text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      crumbDrop === i && "bg-sky-100 text-sky-700",
+                    )}
+                  >
+                    {c.name}
+                  </button>
+                </span>
               ))}
-            </ul>
-          ) : (
-            <div className="table-scroll">
-              <table className="file-table">
-                <thead>
-                  <tr>
-                    <th className="col-check">
-                      <input
-                        type="checkbox"
+            </nav>
+          )}
+
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2.5">
+            <div>
+              <h1 className="text-[clamp(1.6rem,2.6vw,2.1rem)] font-semibold tracking-tight">{pageTitle}</h1>
+              <p className="text-sm text-muted-foreground">
+                {pageMeta}
+                {selectionMode && (
+                  <Badge variant="secondary" className="ml-2">
+                    {selectedCount} picked
+                  </Badge>
+                )}
+              </p>
+            </div>
+            {trashMode && displayed.length > 0 && (
+              <Button variant="destructive" size="sm" disabled={busy} onClick={onEmptyTrash}>
+                <Trash2 /> Empty trash
+              </Button>
+            )}
+            {selectionMode && !trashMode && (
+              <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Selection actions">
+                <Button variant="ghost" size="sm" onClick={clearSelection}>
+                  Clear
+                </Button>
+                <Button variant="outline" size="sm" onClick={allFilteredSelected ? clearSelection : selectAllFiltered}>
+                  {allFilteredSelected ? "Deselect all" : "Select all"}
+                </Button>
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => openMove(Array.from(selected))}>
+                  <FolderInput /> Move ({selectedCount})
+                </Button>
+                <Button variant="destructive" size="sm" disabled={busy} onClick={() => onDeleteMany(Array.from(selected))}>
+                  <Trash2 /> Delete ({selectedCount})
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <Alert variant="destructive" className="mb-3">
+              <AlertDescription className="flex w-full items-center justify-between gap-2">
+                <span>{error}</span>
+                <Button variant="ghost" size="sm" onClick={onClearError} className="shrink-0">
+                  Dismiss
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <section className={cn("relative min-h-[280px] flex-1 rounded-2xl transition-colors", dragOver && "bg-sky-50 ring-2 ring-sky-500/40")}>
+            {dragOver && !searchingMode && (
+              <div className="pointer-events-none absolute inset-0 z-10 grid place-content-center gap-2 rounded-2xl border-2 border-dashed border-sky-500 bg-white/80 text-center">
+                <CloudUpload className="mx-auto h-7 w-7 text-sky-600" />
+                <strong className="tracking-tight">Drop files to upload</strong>
+              </div>
+            )}
+            {(busy && items.length === 0 && !searchingMode) ||
+            (searching && searchingMode && hits === null) ? (
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3" aria-busy="true">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="grid gap-2">
+                    <Skeleton className="h-[150px] w-full" />
+                    <Skeleton className="h-3.5 w-3/4" />
+                  </div>
+                ))}
+              </div>
+            ) : displayed.length === 0 ? (
+              <Card className="grid gap-2 p-8">
+                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                  {searchingMode ? <SearchX className="h-5 w-5" /> : <FolderOpen className="h-5 w-5" />}
+                </span>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  {trashMode ? "Trash is empty" : searchingMode ? "No results" : "This folder is empty"}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  {trashMode
+                    ? "Deleted files and folders will rest here. Cozy, right?"
+                    : searchingMode
+                    ? `Nothing matched “${query.trim()}”. Try another word?`
+                    : "Upload files or create a folder to get started — you’ve got this!"}
+                </p>
+                {!searchingMode && !trashMode && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button onClick={() => fileInput.current?.click()}>
+                      <Upload /> Upload
+                    </Button>
+                    <Button variant="outline" onClick={onMkdir}>
+                      New folder
+                    </Button>
+                    <Button variant="outline" onClick={() => setNoteOpen(true)}>
+                      Quick note
+                    </Button>
+                    <Button variant="outline" onClick={() => setFetchOpen(true)}>
+                      Fetch link
+                    </Button>
+                  </div>
+                )}
+              </Card>
+            ) : view === "grid" ? (
+              <ul className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+                {displayed.map((n) => (
+                  <li key={n.id} className="min-w-0">
+                    <DriveCard
+                      token={token}
+                      node={n}
+                      trashMode={trashMode}
+                      movable={!searchingMode}
+                      dropTarget={!searchingMode}
+                      selected={selected.has(n.id)}
+                      selectionMode={selectionMode}
+                      subtitle={searchingMode ? locationLabel(pathById.get(n.id) ?? []) : undefined}
+                      dragIds={selected.has(n.id) && selectionMode ? Array.from(selected) : [n.id]}
+                      onOpen={() => openNode(n)}
+                      onToggleSelect={() => toggleSelect(n.id)}
+                      onRename={() => onRename(n.id, n.name)}
+                      onMove={() => openMove(selected.has(n.id) && selectionMode ? Array.from(selected) : [n.id])}
+                      onDownload={() => onDownload(n.id)}
+                      onDelete={() => onDelete(n.id)}
+                      onPurge={() => onPurge(n.id)}
+                      onShare={() => onShare(n.id, n.name)}
+                      onSendTelegram={() => onSendTelegram(n.id, n.name)}
+                      onMediaStudio={() => setMediaNode(n)}
+                      onEditVideo={() => setEditVideoNode(n)}
+                      onDragMove={(ids) => void dragMove(ids, n.id)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
                         checked={allFilteredSelected}
-                        onChange={() => (allFilteredSelected ? clearSelection() : selectAllFiltered())}
+                        onCheckedChange={() => (allFilteredSelected ? clearSelection() : selectAllFiltered())}
                         aria-label="Select all"
                       />
-                    </th>
-                    <th>Name</th>
-                    {searchingMode && <th>Location</th>}
-                    <th>Type</th>
-                    <th>Size</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+                    </TableHead>
+                    <TableHead>Name</TableHead>
+                    {searchingMode && <TableHead>Location</TableHead>}
+                    <TableHead>Type</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {displayed.map((n) => {
                     const kind = previewKind(n.name, n.mime_type, n.type === "folder");
                     const isSelected = selected.has(n.id);
                     return (
-                      <tr
+                      <TableRow
                         key={n.id}
-                        className={`${isSelected ? "selected" : ""} ${n.type === "folder" ? "folder-row" : ""}`}
+                        data-state={isSelected ? "selected" : undefined}
                         draggable={!trashMode && !searchingMode}
                         onDragStart={(e) => {
                           if (trashMode || searchingMode) return;
@@ -780,16 +820,15 @@ export function DriveShell(props: Props) {
                           if (ids.length) void dragMove(ids, n.id);
                         }}
                       >
-                        <td className="col-check">
-                          <input
-                            type="checkbox"
+                        <TableCell>
+                          <Checkbox
                             checked={isSelected}
-                            onChange={() => toggleSelect(n.id)}
+                            onCheckedChange={() => toggleSelect(n.id)}
                             aria-label={`Select ${n.name}`}
                           />
-                        </td>
-                        <td>
-                          <button type="button" className="name-link" onClick={() => openNode(n)}>
+                        </TableCell>
+                        <TableCell>
+                          <button type="button" onClick={() => openNode(n)} className="flex max-w-[380px] items-center gap-2.5 text-left">
                             <FileThumb
                               token={token}
                               id={n.id}
@@ -798,362 +837,376 @@ export function DriveShell(props: Props) {
                               isFolder={n.type === "folder"}
                               compact
                             />
-                            <span title={n.name}>{n.name}</span>
+                            <span className="truncate text-sm font-medium" title={n.name}>
+                              {n.name}
+                            </span>
                           </button>
-                        </td>
+                        </TableCell>
                         {searchingMode && (
-                          <td className="meta truncate" title={locationLabel(pathById.get(n.id) ?? [])}>
+                          <TableCell className="max-w-[180px] truncate text-muted-foreground" title={locationLabel(pathById.get(n.id) ?? [])}>
                             {locationLabel(pathById.get(n.id) ?? [])}
-                          </td>
+                          </TableCell>
                         )}
-                        <td className="meta">
-                          <span className="type-cell">
+                        <TableCell>
+                          <span className="inline-flex items-center gap-1.5 text-muted-foreground capitalize">
                             <KindIcon kind={kind} />
                             {n.type === "folder" ? "Folder" : kind}
                           </span>
-                        </td>
-                        <td className="meta">{n.type === "folder" ? "—" : formatBytes(n.size)}</td>
-                        <td className="row end table-actions">
-                          {trashMode ? (
-                            <button type="button" className="card-action danger" title="Delete forever" onClick={() => onPurge(n.id)}>
-                              <i className="fa-solid fa-trash" />
-                            </button>
-                          ) : (
-                            <>
-                              <button type="button" className="card-action" title="Move" onClick={() => openMove(isSelected && selectionMode ? Array.from(selected) : [n.id])}>
-                                <i className="fa-solid fa-folder-tree" />
-                              </button>
-                              <button type="button" className="card-action" title="Rename" onClick={() => onRename(n.id, n.name)}>
-                                <i className="fa-solid fa-pen" />
-                              </button>
-                              {n.type === "file" && (
-                                <button type="button" className="card-action" title="Send to Telegram" onClick={() => onSendTelegram(n.id, n.name)}>
-                                  <i className="fa-solid fa-paper-plane" />
-                                </button>
-                              )}
-                              {n.type === "file" && (
-                                <button type="button" className="card-action" title="Media Studio" onClick={() => setMediaNode(n)}>
-                                  <i className="fa-solid fa-film" />
-                                </button>
-                              )}
-                              {(kind === "video" || kind === "image") && (
-                                <button type="button" className="card-action" title="Edit Media" onClick={() => setEditVideoNode(n)}>
-                                  <i className="fa-solid fa-scissors" />
-                                </button>
-                              )}
-                              {n.type === "file" && (
-                                <button type="button" className="card-action" title="Share" onClick={() => onShare(n.id, n.name)}>
-                                  <i className="fa-solid fa-link" />
-                                </button>
-                              )}
-                              {n.type === "file" ? (
-                                <button type="button" className="card-action" title="Download" onClick={() => onDownload(n.id)}>
-                                  <i className="fa-solid fa-download" />
-                                </button>
-                              ) : (
-                                <span className="card-action spacer" aria-hidden />
-                              )}
-                              <button type="button" className="card-action danger" title="Move to trash" onClick={() => onDelete(n.id)}>
-                                <i className="fa-solid fa-trash" />
-                              </button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{n.type === "folder" ? "—" : formatBytes(n.size)}</TableCell>
+                        <TableCell>
+                          <div className="flex justify-end">
+                            {trashMode ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${n.name}`}>
+                                    <Ellipsis className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onPurge(n.id)}>
+                                    <Trash2 className="h-4 w-4" /> Delete forever
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${n.name}`}>
+                                    <Ellipsis className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                  {n.type === "file" && (
+                                    <DropdownMenuItem onClick={() => onDownload(n.id)}>
+                                      <Download className="h-4 w-4" /> Download
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem onClick={() => openMove(isSelected && selectionMode ? Array.from(selected) : [n.id])}>
+                                    <Move className="h-4 w-4" /> Move
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => onRename(n.id, n.name)}>
+                                    <PenLine className="h-4 w-4" /> Rename
+                                  </DropdownMenuItem>
+                                  {n.type === "file" && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem onClick={() => onShare(n.id, n.name)}>
+                                        <Link2 className="h-4 w-4" /> Share
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => onSendTelegram(n.id, n.name)}>
+                                        <Send className="h-4 w-4" /> Send to Telegram
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => setMediaNode(n)}>
+                                        <Film className="h-4 w-4" /> Media Studio
+                                      </DropdownMenuItem>
+                                      {(kind === "video" || kind === "image") && (
+                                        <DropdownMenuItem onClick={() => setEditVideoNode(n)}>
+                                          <Scissors className="h-4 w-4" /> Edit media
+                                        </DropdownMenuItem>
+                                      )}
+                                    </>
+                                  )}
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete(n.id)}>
+                                    <Trash2 className="h-4 w-4" /> Move to trash
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
+                </TableBody>
+              </Table>
+            )}
+          </section>
+
+          <div className="mt-3 hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
+            <Settings2 className="h-3.5 w-3.5" />
+            Tip: drag files anywhere to upload · press Ctrl/⌘+A to select all · ← → to browse previews.
+          </div>
+          </>
           )}
-        </section>
-      </div>
+        </div>
 
-      <nav
-        className={`mobile-dock mobile-only${dockHidden && !dockSheet ? " dock-hidden" : ""}`}
-        aria-label="Quick actions"
-        aria-hidden={dockHidden && !dockSheet ? true : undefined}
-      >
-        <button
-          type="button"
-          className={section === "drive" && !dockSheet ? "dock-active" : ""}
-          aria-current={section === "drive" && !dockSheet ? "page" : undefined}
-          onClick={() => {
-            setDockSheet(null);
-            onSectionChange("drive");
-            onCrumb(0);
-            setQuery("");
-            setHits(null);
-          }}
+        {/* Mobile dock */}
+        <nav
+          aria-label="Quick actions"
+          className={cn(
+            "fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 gap-1 rounded-2xl border bg-card/95 p-1.5 shadow-xl backdrop-blur transition-transform lg:hidden",
+            dockHidden && !dockSheet && "translate-y-[120%]",
+          )}
         >
-          <i className="fa-solid fa-hard-drive" aria-hidden />
-          <span>Drive</span>
-        </button>
-
-        <button
-          type="button"
-          className={`dock-fab ${dockSheet === "create" ? "open" : ""}`}
-          aria-label="Create"
-          aria-expanded={dockSheet === "create"}
-          onClick={() => setDockSheet((s) => (s === "create" ? null : "create"))}
-        >
-          <i className={`fa-solid ${dockSheet === "create" ? "fa-xmark" : "fa-plus"}`} aria-hidden />
-          <span>Create</span>
-        </button>
-
-        <button
-          type="button"
-          className={section === "trash" || dockSheet === "more" ? "dock-active" : ""}
-          aria-expanded={dockSheet === "more"}
-          onClick={() => setDockSheet((s) => (s === "more" ? null : "more"))}
-        >
-          <i className="fa-solid fa-ellipsis" aria-hidden />
-          <span>More</span>
-        </button>
-      </nav>
-
-      {dockSheet && (
-        <div className="dock-sheet-layer mobile-only">
           <button
             type="button"
-            className="dock-sheet-scrim"
-            aria-label="Close menu"
-            onClick={() => setDockSheet(null)}
-          />
-          <div
-            className="dock-sheet"
-            role="menu"
-            aria-label={dockSheet === "create" ? "Create" : "More"}
-          >
-            {dockSheet === "create" ? (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    fileInput.current?.click();
-                    setDockSheet(null);
-                  }}
-                >
-                  <i className="fa-solid fa-cloud-arrow-up" aria-hidden />
-                  <span>
-                    <strong>Upload</strong>
-                    <small>Photos, videos, files</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setDockSheet(null);
-                    onMkdir();
-                  }}
-                >
-                  <i className="fa-solid fa-folder-plus" aria-hidden />
-                  <span>
-                    <strong>New folder</strong>
-                    <small>Organize your drive</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setDockSheet(null);
-                    setNoteOpen(true);
-                  }}
-                >
-                  <i className="fa-solid fa-note-sticky" aria-hidden />
-                  <span>
-                    <strong>Note</strong>
-                    <small>Quick text file</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setDockSheet(null);
-                    setFetchOpen(true);
-                  }}
-                >
-                  <i className="fa-solid fa-cloud-arrow-down" aria-hidden />
-                  <span>
-                    <strong>Fetch link</strong>
-                    <small>Photos & video from the web</small>
-                  </span>
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setDockSheet(null);
-                    onSectionChange("trash");
-                    setQuery("");
-                    setHits(null);
-                  }}
-                >
-                  <i className="fa-solid fa-trash" aria-hidden />
-                  <span>
-                    <strong>Trash</strong>
-                    <small>Deleted files</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setDockSheet(null);
-                    onOpenSettings();
-                  }}
-                >
-                  <i className="fa-solid fa-gear" aria-hidden />
-                  <span>
-                    <strong>Settings</strong>
-                    <small>Storage API &amp; key</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="danger"
-                  onClick={() => {
-                    setDockSheet(null);
-                    onLogout();
-                  }}
-                >
-                  <i className="fa-solid fa-right-from-bracket" aria-hidden />
-                  <span>
-                    <strong>Sign out</strong>
-                    <small>End this session</small>
-                  </span>
-                </button>
-              </>
+            onClick={() => {
+              setDockSheet(null);
+              onSectionChange("drive");
+              onCrumb(0);
+              setQuery("");
+              setHits(null);
+            }}
+            className={cn(
+              "grid justify-items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-medium",
+              section === "drive" && !dockSheet ? "bg-muted" : "text-muted-foreground",
             )}
+          >
+            <HardDrive className="h-4 w-4" />
+            Drive
+          </button>
+          <button
+            type="button"
+            aria-expanded={dockSheet === "create"}
+            onClick={() => setDockSheet((s) => (s === "create" ? null : "create"))}
+            className={cn(
+              "grid justify-items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-medium",
+              dockSheet === "create" ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary",
+            )}
+          >
+            {dockSheet === "create" ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            Create
+          </button>
+          <button
+            type="button"
+            aria-expanded={dockSheet === "more"}
+            onClick={() => setDockSheet((s) => (s === "more" ? null : "more"))}
+            className={cn(
+              "grid justify-items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-medium",
+              section === "trash" || dockSheet === "more" ? "bg-muted" : "text-muted-foreground",
+            )}
+          >
+            <Ellipsis className="h-4 w-4" />
+            More
+          </button>
+        </nav>
+
+        {dockSheet && (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            <button type="button" className="absolute inset-0 bg-black/30" aria-label="Close menu" onClick={() => setDockSheet(null)} />
+            <div className="absolute inset-x-3 bottom-[76px] grid gap-1 rounded-2xl border bg-card p-2 shadow-xl" role="menu">
+              {dockSheet === "create" ? (
+                <>
+                  {[
+                    { id: "upload", title: "Upload", sub: "Photos, videos, files", icon: CloudUpload, run: () => { fileInput.current?.click(); setDockSheet(null); } },
+                    { id: "folder", title: "New folder", sub: "Organize your drive", icon: FolderPlus, run: () => { setDockSheet(null); onMkdir(); } },
+                    { id: "note", title: "Note", sub: "Quick text file", icon: StickyNote, run: () => { setDockSheet(null); setNoteOpen(true); } },
+                    { id: "fetch", title: "Fetch link", sub: "From the web", icon: CloudDownload, run: () => { setDockSheet(null); setFetchOpen(true); } },
+                  ].map((a) => (
+                    <button key={a.id} type="button" role="menuitem" onClick={a.run} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted">
+                      <span className="grid h-9 w-9 place-items-center rounded-xl bg-muted">
+                        <a.icon className="h-4 w-4" />
+                      </span>
+                      <span className="grid">
+                        <strong className="text-sm">{a.title}</strong>
+                        <small className="text-xs text-muted-foreground">{a.sub}</small>
+                      </span>
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDockSheet(null);
+                      onSectionChange("trash");
+                      setQuery("");
+                      setHits(null);
+                    }}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-muted">
+                      <Trash2 className="h-4 w-4" />
+                    </span>
+                    <span className="grid">
+                      <strong className="text-sm">Trash</strong>
+                      <small className="text-xs text-muted-foreground">Deleted files</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDockSheet(null);
+                      onSectionChange("buckets");
+                      setQuery("");
+                      setHits(null);
+                    }}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-muted">
+                      <Boxes className="h-4 w-4" />
+                    </span>
+                    <span className="grid">
+                      <strong className="text-sm">S3 Buckets</strong>
+                      <small className="text-xs text-muted-foreground">Object storage</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDockSheet(null);
+                      onSectionChange("settings");
+                      setQuery("");
+                      setHits(null);
+                    }}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-muted">
+                      <Settings2 className="h-4 w-4" />
+                    </span>
+                    <span className="grid">
+                      <strong className="text-sm">Settings</strong>
+                      <small className="text-xs text-muted-foreground">Storage API & key</small>
+                    </span>
+                  </button>
+                  <Separator />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDockSheet(null);
+                      onLogout();
+                    }}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-destructive hover:bg-destructive/10"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-destructive/10">
+                      <LogOut className="h-4 w-4" />
+                    </span>
+                    <span className="grid">
+                      <strong className="text-sm">Sign out</strong>
+                      <small className="text-xs opacity-70">End this session</small>
+                    </span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {moveIds && (
-        <MoveModal
-          token={token}
-          busy={busy}
-          count={moveIds.length}
-          excludeIds={moveIds}
-          onClose={() => setMoveIds(null)}
-          onConfirm={(parentId) => void confirmMove(parentId)}
-        />
-      )}
+        {moveIds && (
+          <MoveModal
+            token={token}
+            busy={busy}
+            count={moveIds.length}
+            excludeIds={moveIds}
+            onClose={() => setMoveIds(null)}
+            onConfirm={(parentId) => void confirmMove(parentId)}
+          />
+        )}
 
-      {noteOpen && (
-        <NoteModal
-          busy={busy}
-          onClose={() => setNoteOpen(false)}
-          onSave={(name, body) => {
-            const file = new File([body], name, { type: "text/plain;charset=utf-8" });
-            setNoteOpen(false);
-            onUpload([file]);
-          }}
-        />
-      )}
+        {noteOpen && (
+          <NoteModal
+            busy={busy}
+            onClose={() => setNoteOpen(false)}
+            onSave={(name, body) => {
+              const file = new File([body], name, { type: "text/plain;charset=utf-8" });
+              setNoteOpen(false);
+              onUpload([file]);
+            }}
+          />
+        )}
 
-      {fetchOpen && (
-        <FetchModal
-          busy={fetchBusy}
-          progress={fetchProgress}
-          message={fetchMessage}
-          initialUrl={pendingFetchUrl}
-          onClose={() => {
-            if (!fetchBusy) {
-              setFetchOpen(false);
-              setPendingFetchUrl("");
-            }
-          }}
-          onFetch={async (input) => {
-            setFetchBusy(true);
-            setFetchProgress(0);
-            setFetchMessage("Starting…");
-            try {
-              await onFetchURL(input, ({ progress, message }) => {
-                setFetchProgress(progress);
-                setFetchMessage(message);
-              });
-              setFetchOpen(false);
-            } catch (e) {
-              setFetchMessage((e as Error).message);
-            } finally {
-              setFetchBusy(false);
-            }
-          }}
-          onImport={async (importUrl) => {
-            setFetchBusy(true);
-            setFetchProgress(0);
-            setFetchMessage("Importing…");
-            try {
-              await onImportURL(importUrl);
-              setFetchOpen(false);
-            } catch (e) {
-              setFetchMessage((e as Error).message);
-            } finally {
-              setFetchBusy(false);
-            }
-          }}
-        />
-      )}
+        {fetchOpen && (
+          <FetchModal
+            busy={fetchBusy}
+            progress={fetchProgress}
+            message={fetchMessage}
+            initialUrl={pendingFetchUrl}
+            onClose={() => {
+              if (!fetchBusy) {
+                setFetchOpen(false);
+                setPendingFetchUrl("");
+              }
+            }}
+            onFetch={async (input) => {
+              setFetchBusy(true);
+              setFetchProgress(0);
+              setFetchMessage("Starting…");
+              try {
+                await onFetchURL(input, ({ progress, message }) => {
+                  setFetchProgress(progress);
+                  setFetchMessage(message);
+                });
+                setFetchOpen(false);
+              } catch (e) {
+                setFetchMessage((e as Error).message);
+              } finally {
+                setFetchBusy(false);
+              }
+            }}
+            onImport={async (importUrl) => {
+              setFetchBusy(true);
+              setFetchProgress(0);
+              setFetchMessage("Importing…");
+              try {
+                await onImportURL(importUrl);
+                setFetchOpen(false);
+              } catch (e) {
+                setFetchMessage((e as Error).message);
+              } finally {
+                setFetchBusy(false);
+              }
+            }}
+          />
+        )}
 
-      {preview && (
-        <PreviewModal
-          token={token}
-          node={preview}
-          playlist={previewPlaylist}
-          index={previewIndex}
-          onNavigate={(i) => setPreview(previewPlaylist[i] ?? null)}
-          onClose={() => setPreview(null)}
-          onDownload={() => onDownload(preview.id)}
-          onRename={() => onRename(preview.id, preview.name)}
-          onShare={() => onShare(preview.id, preview.name)}
-          onSendTelegram={() => onSendTelegram(preview.id, preview.name)}
-          onMediaStudio={() => {
-            setMediaNode(preview);
-            setPreview(null);
-          }}
-          onEditVideo={() => {
-            setEditVideoNode(preview);
-            setPreview(null);
-          }}
-          onDelete={() => {
-            onDelete(preview.id);
-            setPreview(null);
-          }}
-        />
-      )}
+        {preview && (
+          <PreviewModal
+            token={token}
+            node={preview}
+            playlist={previewPlaylist}
+            index={previewIndex}
+            onNavigate={(i) => setPreview(previewPlaylist[i] ?? null)}
+            onClose={() => setPreview(null)}
+            onDownload={() => onDownload(preview.id)}
+            onRename={() => onRename(preview.id, preview.name)}
+            onShare={() => onShare(preview.id, preview.name)}
+            onSendTelegram={() => onSendTelegram(preview.id, preview.name)}
+            onMediaStudio={() => {
+              setMediaNode(preview);
+              setPreview(null);
+            }}
+            onEditVideo={() => {
+              setEditVideoNode(preview);
+              setPreview(null);
+            }}
+            onDelete={() => {
+              onDelete(preview.id);
+              setPreview(null);
+            }}
+          />
+        )}
 
-      {mediaNode && (
-        <MediaStudioModal
-          token={token}
-          node={mediaNode}
-          busy={busy}
-          onClose={() => setMediaNode(null)}
-          onDone={() => {
-            void onRefresh();
-          }}
-        />
-      )}
+        {mediaNode && (
+          <MediaStudioModal
+            token={token}
+            node={mediaNode}
+            busy={busy}
+            onClose={() => setMediaNode(null)}
+            onDone={() => {
+              void onRefresh();
+            }}
+          />
+        )}
 
-      {editVideoNode && (
-        <VideoEditor
-          token={token}
-          node={editVideoNode}
-          onClose={() => setEditVideoNode(null)}
-          onDone={() => {
-            setEditVideoNode(null);
-            void onRefresh();
-          }}
-        />
-      )}
-    </div>
+        {editVideoNode && (
+          <VideoEditor
+            token={token}
+            node={editVideoNode}
+            onClose={() => setEditVideoNode(null)}
+            onDone={() => {
+              setEditVideoNode(null);
+              void onRefresh();
+            }}
+          />
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

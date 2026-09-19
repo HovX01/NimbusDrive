@@ -1,4 +1,12 @@
-import { Portal } from "./Portal";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 
 type Props = {
   title: string;
@@ -20,36 +28,21 @@ export function ConfirmDialog({
   onConfirm,
 }: Props) {
   return (
-    <Portal>
-      <div className="modal-backdrop" role="presentation" onClick={onCancel}>
-        <div
-          className="modal confirm-modal"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="confirm-title"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <header className="modal-head">
-            <div>
-              <h2 id="confirm-title">{title}</h2>
-              <p className="meta">{message}</p>
-            </div>
-          </header>
-          <footer className="modal-foot row end">
-            <button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className={danger ? "btn danger-ghost" : "btn-create"}
-              disabled={busy}
-              onClick={onConfirm}
-            >
-              {confirmLabel}
-            </button>
-          </footer>
-        </div>
-      </div>
-    </Portal>
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{message}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 pt-2">
+          <Button variant="outline" disabled={busy} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant={danger ? "destructive" : "default"} disabled={busy} onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

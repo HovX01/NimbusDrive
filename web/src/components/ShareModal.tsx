@@ -1,6 +1,16 @@
 import { useMemo, useState } from "react";
+import { Check, Copy, Link2, Mail, MessageCircle, Send, Share as ShareIcon } from "lucide-react";
 import type { ShareInfo } from "../api";
-import { Portal } from "./Portal";
+import { copyText } from "../lib/clipboard";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Separator } from "./ui/separator";
 
 type Props = {
   fileName: string;
@@ -17,16 +27,19 @@ function canUseSystemShare() {
 
 export function ShareModal({ fileName, busy, shares, onClose, onCreate, onRevoke }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [manualCopy, setManualCopy] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const systemShare = useMemo(() => canUseSystemShare(), []);
 
   async function copy(url: string) {
-    try {
-      await navigator.clipboard.writeText(url);
+    const ok = await copyText(url);
+    if (ok) {
+      setManualCopy(null);
       setCopied(url);
       window.setTimeout(() => setCopied(null), 2000);
-    } catch {
-      window.prompt("Copy this link:", url);
+    } else {
+      // Clipboard blocked — show the link so it can be selected by hand.
+      setManualCopy(url);
     }
   }
 
@@ -67,7 +80,6 @@ export function ShareModal({ fileName, busy, shares, onClose, onCreate, onRevoke
       } else if (kind === "whatsapp") {
         href = `https://wa.me/?text=${encodeURIComponent(text)}`;
       } else {
-        // iOS Messages / SMS — also works as a mailto fallback on desktop.
         const sms = `sms:?&body=${encodeURIComponent(text)}`;
         href = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? sms : `mailto:?subject=${encodeURIComponent(fileName)}&body=${encodeURIComponent(text)}`;
       }
@@ -79,134 +91,108 @@ export function ShareModal({ fileName, busy, shares, onClose, onCreate, onRevoke
 
   const disabled = busy || sharing;
 
+  const apps = [
+    ...(systemShare
+      ? [{ id: "system", label: "Share via…", icon: ShareIcon, tint: "bg-primary text-primary-foreground", run: shareSystem }]
+      : []),
+    { id: "messages", label: "Messages", icon: MessageCircle, tint: "bg-green-500 text-white", run: () => void openAppShare("messages") },
+    { id: "whatsapp", label: "WhatsApp", icon: MessageCircle, tint: "bg-[#25D366] text-white", run: () => void openAppShare("whatsapp") },
+    { id: "telegram", label: "Telegram", icon: Send, tint: "bg-[#229ED9] text-white", run: () => void openAppShare("telegram") },
+    {
+      id: "copy",
+      label: copied ? "Copied!" : "Copy link",
+      icon: copied ? Check : Link2,
+      tint: "bg-muted text-foreground",
+      run: () => {
+        void (async () => {
+          setSharing(true);
+          try {
+            const url = await ensureUrl();
+            if (url) await copy(url);
+          } finally {
+            setSharing(false);
+          }
+        })();
+      },
+    },
+  ];
+
   return (
-    <Portal>
-      <div className="modal-backdrop" role="presentation" onClick={onClose}>
-        <div
-          className="modal note-modal share-sheet-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Share file"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <header className="modal-head">
-            <div>
-              <p className="eyebrow">Share</p>
-              <h2>{fileName}</h2>
-              <p className="meta">Send via your apps — no need to copy the link by hand.</p>
-            </div>
-            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
-              <i className="fa-solid fa-xmark" />
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle className="truncate">{fileName}</DialogTitle>
+          <DialogDescription>Share a friendly download link — pick your favorite app.</DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-5 gap-2 py-2">
+          {apps.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              disabled={disabled}
+              onClick={a.run}
+              className="group grid justify-items-center gap-1.5 rounded-xl p-2 transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              <span className={`grid h-11 w-11 place-items-center rounded-2xl shadow-xs ${a.tint}`}>
+                <a.icon className="h-5 w-5" />
+              </span>
+              <span className="text-[11px] font-medium leading-tight">{a.label}</span>
             </button>
-          </header>
-
-          <div className="note-modal-body share-sheet-body">
-            <div className="share-apps" role="list">
-              {systemShare && (
-                <button
-                  type="button"
-                  className="share-app"
-                  role="listitem"
-                  disabled={disabled}
-                  onClick={() => void shareSystem()}
-                >
-                  <span className="share-app-ico system">
-                    <i className="fa-solid fa-arrow-up-from-bracket" aria-hidden />
-                  </span>
-                  <span>Share via…</span>
-                </button>
-              )}
-              <button
-                type="button"
-                className="share-app"
-                role="listitem"
-                disabled={disabled}
-                onClick={() => void openAppShare("messages")}
-              >
-                <span className="share-app-ico messages">
-                  <i className="fa-solid fa-comment" aria-hidden />
-                </span>
-                <span>Messages</span>
-              </button>
-              <button
-                type="button"
-                className="share-app"
-                role="listitem"
-                disabled={disabled}
-                onClick={() => void openAppShare("whatsapp")}
-              >
-                <span className="share-app-ico whatsapp">
-                  <i className="fa-brands fa-whatsapp" aria-hidden />
-                </span>
-                <span>WhatsApp</span>
-              </button>
-              <button
-                type="button"
-                className="share-app"
-                role="listitem"
-                disabled={disabled}
-                onClick={() => void openAppShare("telegram")}
-              >
-                <span className="share-app-ico telegram">
-                  <i className="fa-brands fa-telegram" aria-hidden />
-                </span>
-                <span>Telegram</span>
-              </button>
-              <button
-                type="button"
-                className="share-app"
-                role="listitem"
-                disabled={disabled}
-                onClick={() => {
-                  void (async () => {
-                    setSharing(true);
-                    try {
-                      const url = await ensureUrl();
-                      if (url) await copy(url);
-                    } finally {
-                      setSharing(false);
-                    }
-                  })();
-                }}
-              >
-                <span className="share-app-ico copy">
-                  <i className="fa-solid fa-link" aria-hidden />
-                </span>
-                <span>{copied ? "Copied" : "Copy link"}</span>
-              </button>
-            </div>
-
-            <p className="meta share-sheet-hint">
-              Nimbus creates a download link once, then opens your phone’s share targets.
-            </p>
-
-            {shares.length > 0 && (
-              <ul className="share-list">
-                {shares.map((s) => (
-                  <li key={s.link.id} className="share-row">
-                    <code className="share-url truncate" title={s.url}>
-                      {s.url}
-                    </code>
-                    <div className="share-row-actions">
-                      <button type="button" className="btn ghost compact" disabled={disabled} onClick={() => void copy(s.url)}>
-                        {copied === s.url ? "Copied" : "Copy"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn danger-ghost compact"
-                        disabled={disabled}
-                        onClick={() => onRevoke(s.link.id)}
-                      >
-                        Revoke
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          ))}
         </div>
-      </div>
-    </Portal>
+
+        <p className="text-xs text-muted-foreground">
+          Nimbus creates one download link, then opens your share target. Easy!
+        </p>
+
+        {manualCopy && (
+          <div className="grid gap-1.5 rounded-xl border border-dashed p-3">
+            <p className="text-xs font-medium">Copy this link by hand:</p>
+            <code className="break-all font-mono text-xs">{manualCopy}</code>
+          </div>
+        )}
+
+        {shares.length > 0 && (
+          <>
+            <Separator />
+            <ul className="grid gap-2">
+              {shares.map((s) => (
+                <li
+                  key={s.link.id}
+                  className="flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2"
+                >
+                  <code className="min-w-0 flex-1 truncate text-xs" title={s.url}>
+                    {s.url}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={disabled}
+                    onClick={() => void copy(s.url)}
+                  >
+                    {copied === s.url ? <Check /> : <Copy />}
+                    {copied === s.url ? "Copied" : "Copy"}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={disabled}
+                    onClick={() => onRevoke(s.link.id)}
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Mail className="h-3.5 w-3.5" />
+          Links work for anyone — revoke anytime to take one down.
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

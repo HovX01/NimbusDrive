@@ -1,8 +1,32 @@
 import { useEffect, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Film,
+  Link2,
+  Loader2,
+  Music,
+  PenLine,
+  Scissors,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { fetchFileBlob, fetchThumbBlob, mediaStreamUrl, type Node } from "../api";
-import { extOf, formatBytes, kindLabel, previewKind, usesFullscreenViewer } from "../lib/files";
+import { extOf, formatBytes, kindLabel, previewKind } from "../lib/files";
+import { cn } from "@/lib/utils";
 import { FileThumb } from "./FileThumb";
-import { Portal } from "./Portal";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Skeleton } from "./ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type Props = {
   token: string;
@@ -86,11 +110,10 @@ function PreviewContent({
 
     if (kind === "image") {
       if (heic) {
-        setError("HEIC photos need conversion — use Media Studio or download to view on Windows.");
+        setError("HEIC photos need conversion — use Media Studio or download to view.");
         setLoading(false);
         return;
       }
-      // Stream from server (local cache after first open) instead of downloading a huge blob in JS.
       setUrl(mediaStreamUrl(token, node.id));
       setLoading(false);
       void fetchThumbBlob(token, node.id)
@@ -100,9 +123,7 @@ function PreviewContent({
           urls.push(u);
           setThumbUrl(u);
         })
-        .catch(() => {
-          /* optional */
-        });
+        .catch(() => undefined);
       return;
     }
 
@@ -132,40 +153,35 @@ function PreviewContent({
 
   if (loading) {
     return (
-      <div className="skeleton preview-skeleton" aria-busy="true">
-        <span className="viewer-hint">Loading preview…</span>
+      <div className="grid place-items-center gap-2 py-16" aria-busy="true">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Loading preview…</p>
+        <Skeleton className="h-[280px] w-full max-w-[640px]" />
       </div>
     );
   }
   if (error) {
     return (
-      <div className="empty-panel viewer-empty">
-        <p>Preview unavailable</p>
-        <p className="meta">{error}</p>
-        <div className="row gap" style={{ justifyContent: "center", flexWrap: "wrap" }}>
-          <button type="button" className="btn" onClick={onDownload}>
-            Download
-          </button>
-        </div>
+      <div className="grid justify-items-center gap-2 rounded-2xl bg-muted/50 px-6 py-12 text-center">
+        <p className="font-semibold">Preview unavailable</p>
+        <p className="max-w-md text-sm text-muted-foreground">{error}</p>
+        <Button onClick={onDownload} className="mt-2">
+          <Download /> Download
+        </Button>
       </div>
     );
   }
 
   if (kind === "image" && url) {
     return (
-      <div className="viewer-image-wrap">
+      <div className="relative grid place-items-center overflow-hidden rounded-2xl bg-zinc-950">
         {thumbUrl && (
-          <img
-            src={thumbUrl}
-            alt=""
-            className="viewer-media viewer-thumb-blur"
-            aria-hidden
-          />
+          <img src={thumbUrl} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-105 object-cover opacity-40 blur-xl" />
         )}
         <img
           src={url}
           alt={node.name}
-          className="viewer-media"
+          className="relative max-h-[62vh] w-auto max-w-full object-contain"
           onLoad={() => setThumbUrl(null)}
         />
       </div>
@@ -175,43 +191,31 @@ function PreviewContent({
   if (kind === "video" && url) {
     if (playError) {
       return (
-        <div className="empty-panel viewer-empty">
-          <p>Can’t play this video in the browser</p>
-          <p className="meta">
+        <div className="grid justify-items-center gap-2 rounded-2xl bg-muted/50 px-6 py-12 text-center">
+          <p className="font-semibold">Can’t play this video here</p>
+          <p className="max-w-md text-sm text-muted-foreground">
             {playError}
-            {hevc
-              ? " iPhone screen recordings are usually HEVC — Chrome on Windows often can’t decode them."
-              : ""}
+            {hevc ? " iPhone screen recordings are usually HEVC — try Make playable." : ""}
           </p>
-          <div className="row gap" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
             {onMediaStudio && (
-              <button type="button" className="btn" onClick={onMediaStudio}>
-                Make playable (Media Studio)
-              </button>
+              <Button onClick={onMediaStudio}>
+                <Film /> Make playable
+              </Button>
             )}
-            <button type="button" className="btn ghost" onClick={onDownload}>
-              Download
-            </button>
+            <Button variant="outline" onClick={onDownload}>
+              <Download /> Download
+            </Button>
           </div>
         </div>
       );
     }
     return (
-      <div className="viewer-video-wrap">
+      <div className="grid gap-2 overflow-hidden rounded-2xl bg-zinc-950 p-2">
         {buffering && (
-          <p className="viewer-hint viewer-buffering">
-            {hevc
-              ? "Loading… If this stays blank, use Make playable (HEVC)."
-              : "Loading from Telegram (first open may take a moment)…"}
-          </p>
-        )}
-        {hevc && !buffering && onMediaStudio && (
-          <p className="viewer-hint">
-            Screen recording may need{" "}
-            <button type="button" className="linkish" onClick={onMediaStudio}>
-              Make playable
-            </button>{" "}
-            if it won’t start.
+          <p className="flex items-center justify-center gap-2 px-2 py-1 text-xs text-zinc-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {hevc ? "Loading… if blank, use Make playable (HEVC)." : "Loading from Telegram…"}
           </p>
         )}
         <video
@@ -221,25 +225,19 @@ function PreviewContent({
           autoPlay
           playsInline
           preload="auto"
-          className="viewer-media"
+          className="max-h-[62vh] w-full rounded-xl bg-black"
           onLoadStart={() => setBuffering(true)}
           onWaiting={() => setBuffering(true)}
           onPlaying={() => setBuffering(false)}
           onCanPlay={() => setBuffering(false)}
           onError={(e) => {
             const media = e.currentTarget;
-            // MEDIA_ERR_SRC_NOT_SUPPORTED / decode — often HEVC; network blips shouldn't look permanent.
             const code = media.error?.code;
             if (code === 2) {
-              // MEDIA_ERR_NETWORK — retry once by remounting isn't automatic; show soft message
               setPlayError("Network hiccup while streaming. Close and open again, or try Make playable.");
               return;
             }
-            setPlayError(
-              hevc
-                ? "This looks like an HEVC screen recording."
-                : "The browser can’t decode this video codec.",
-            );
+            setPlayError(hevc ? "This looks like an HEVC screen recording." : "The browser can’t decode this video.");
           }}
         />
       </div>
@@ -248,27 +246,33 @@ function PreviewContent({
 
   if (kind === "audio" && url) {
     return (
-      <div className="audio-wrap viewer-audio">
-        <i className="fa-solid fa-music viewer-audio-ico" aria-hidden />
-        <audio key={node.id} src={url} controls autoPlay preload="auto" />
+      <div className="flex items-center gap-4 rounded-2xl bg-muted/60 p-5">
+        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground">
+          <Music className="h-5 w-5" />
+        </span>
+        <audio key={node.id} src={url} controls autoPlay preload="auto" className="w-full" />
       </div>
     );
   }
 
   if (kind === "pdf" && url) {
-    return <iframe title={node.name} src={url} className="viewer-pdf" />;
+    return <iframe title={node.name} src={url} className="h-[62vh] w-full rounded-2xl border bg-white" />;
   }
 
   if (kind === "text" && text !== null) {
-    return <pre className="preview-text viewer-text">{text}</pre>;
+    return (
+      <pre className="max-h-[62vh] overflow-auto whitespace-pre-wrap rounded-2xl bg-muted/60 p-5 font-mono text-[13px] leading-relaxed">
+        {text}
+      </pre>
+    );
   }
 
   return (
-    <div className="empty-panel viewer-empty">
-      <p>No inline preview for this type</p>
-      <button type="button" className="btn" onClick={onDownload}>
-        Download
-      </button>
+    <div className="grid justify-items-center gap-2 rounded-2xl bg-muted/50 px-6 py-12 text-center">
+      <p className="font-semibold">No inline preview for this type</p>
+      <Button onClick={onDownload}>
+        <Download /> Download
+      </Button>
     </div>
   );
 }
@@ -289,7 +293,6 @@ export function PreviewModal({
   onDelete,
 }: Props) {
   const kind = previewKind(node.name, node.mime_type, false);
-  const fullscreen = usesFullscreenViewer(kind);
   const hasPrev = index > 0;
   const hasNext = index >= 0 && index < playlist.length - 1;
   const counter = playlist.length > 1 && index >= 0 ? `${index + 1} / ${playlist.length}` : null;
@@ -313,173 +316,97 @@ export function PreviewModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onNavigate, index, hasPrev, hasNext, playlist.length]);
 
-  const toolbar = (
-    <header className={fullscreen ? "viewer-toolbar" : "preview-header"}>
-      <div className="viewer-meta">
-        <p className="eyebrow">{kindLabel(kind)}</p>
-        <h2 className={fullscreen ? "viewer-title" : "preview-title"}>{node.name}</h2>
-        <p className="meta">
-          {formatBytes(node.size)}
-          {counter ? ` · ${counter}` : ""}
-        </p>
-      </div>
-      <div className={fullscreen ? "viewer-actions" : "preview-actions"}>
-        <button type="button" className="icon-btn" aria-label="Rename" title="Rename" onClick={onRename}>
-          <i className="fa-solid fa-pen" aria-hidden />
-        </button>
-        <button type="button" className="icon-btn" aria-label="Share" title="Share" onClick={onShare}>
-          <i className="fa-solid fa-link" aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Send to Telegram"
-          title="Send to Telegram"
-          onClick={onSendTelegram}
-        >
-          <i className="fa-solid fa-paper-plane" aria-hidden />
-        </button>
-        {onMediaStudio && (
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Media Studio"
-            title="Media Studio"
-            onClick={onMediaStudio}
-          >
-            <i className="fa-solid fa-film" aria-hidden />
-          </button>
-        )}
-        {(kind === "video" || kind === "image") && onEditVideo && (
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Edit Media"
-            title="Edit Media"
-            onClick={onEditVideo}
-          >
-            <i className="fa-solid fa-scissors" aria-hidden />
-          </button>
-        )}
-        <button type="button" className="icon-btn" aria-label="Download" title="Download" onClick={onDownload}>
-          <i className="fa-solid fa-download" aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-btn danger"
-          aria-label="Move to trash"
-          title="Move to trash"
-          onClick={onDelete}
-        >
-          <i className="fa-solid fa-trash" aria-hidden />
-        </button>
-        <span className="action-sep" aria-hidden />
-        <button type="button" className="icon-btn" aria-label="Close preview" title="Close" onClick={onClose}>
-          <i className="fa-solid fa-xmark" aria-hidden />
-        </button>
-      </div>
-    </header>
-  );
-
-  const stage = (
-    <PreviewContent
-      token={token}
-      node={node}
-      kind={kind}
-      onDownload={onDownload}
-      onMediaStudio={onMediaStudio}
-    />
-  );
-
-  if (fullscreen) {
-    return (
-      <Portal>
-        <div className="viewer-backdrop" role="presentation" onClick={onClose}>
-          <div
-            className="viewer-shell"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Preview ${node.name}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {toolbar}
-            <div className="viewer-body">
-              {hasPrev && (
-                <button
-                  type="button"
-                  className="viewer-nav prev"
-                  aria-label="Previous file"
-                  onClick={() => onNavigate(index - 1)}
-                >
-                  <i className="fa-solid fa-chevron-left" />
-                </button>
-              )}
-              <div className="viewer-stage">{stage}</div>
-              {hasNext && (
-                <button
-                  type="button"
-                  className="viewer-nav next"
-                  aria-label="Next file"
-                  onClick={() => onNavigate(index + 1)}
-                >
-                  <i className="fa-solid fa-chevron-right" />
-                </button>
-              )}
-            </div>
-            {playlist.length > 1 && (
-              <footer className="viewer-filmstrip" aria-label="Files in folder">
-                {playlist.map((n, i) => (
-                  <button
-                    key={n.id}
-                    type="button"
-                    className={`viewer-thumb ${i === index ? "active" : ""}`}
-                    aria-label={n.name}
-                    aria-current={i === index ? "true" : undefined}
-                    onClick={() => onNavigate(i)}
-                  >
-                    <FileThumb
-                      token={token}
-                      id={n.id}
-                      name={n.name}
-                      mime={n.mime_type}
-                      isFolder={false}
-                      compact
-                    />
-                  </button>
-                ))}
-              </footer>
-            )}
-          </div>
-        </div>
-      </Portal>
-    );
-  }
+  const actions = [
+    { id: "rename", icon: PenLine, tip: "Rename", run: onRename },
+    { id: "share", icon: Link2, tip: "Share", run: onShare },
+    { id: "send", icon: Send, tip: "Send to Telegram", run: onSendTelegram },
+    ...(onMediaStudio ? [{ id: "studio", icon: Film, tip: "Media Studio", run: onMediaStudio }] : []),
+    ...((kind === "video" || kind === "image") && onEditVideo
+      ? [{ id: "edit", icon: Scissors, tip: "Edit media", run: onEditVideo }]
+      : []),
+    { id: "download", icon: Download, tip: "Download", run: onDownload },
+  ];
 
   return (
-    <Portal>
-      <div className="modal-backdrop" role="presentation" onClick={onClose}>
-        <div
-          className="modal preview-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Preview ${node.name}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {toolbar}
-          {playlist.length > 1 && (
-            <div className="preview-nav-bar">
-              <button type="button" className="btn ghost compact" disabled={!hasPrev} onClick={() => onNavigate(index - 1)}>
-                <i className="fa-solid fa-chevron-left" /> Previous
-              </button>
-              {counter && <span className="meta">{counter}</span>}
-              <button type="button" className="btn ghost compact" disabled={!hasNext} onClick={() => onNavigate(index + 1)}>
-                Next <i className="fa-solid fa-chevron-right" />
-              </button>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-auto sm:max-w-[880px]">
+        <DialogHeader className="flex-row items-start justify-between gap-3 space-y-0">
+          <div className="grid min-w-0 gap-1">
+            <Badge variant="muted" className="w-fit capitalize">
+              {kindLabel(kind)}
+            </Badge>
+            <DialogTitle className="break-words leading-snug">{node.name}</DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              {formatBytes(node.size)}
+              {counter ? ` · ${counter}` : ""}
+            </p>
+          </div>
+          <TooltipProvider>
+            <div className="flex shrink-0 items-center gap-0.5">
+              {actions.map((a) => (
+                <Tooltip key={a.id}>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" onClick={a.run} aria-label={a.tip}>
+                      <a.icon className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{a.tip}</TooltipContent>
+                </Tooltip>
+              ))}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={onDelete} aria-label="Move to trash" className="text-destructive hover:text-destructive">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Move to trash</TooltipContent>
+              </Tooltip>
             </div>
-          )}
-          <div className="preview-stage">{stage}</div>
-        </div>
-      </div>
-    </Portal>
+          </TooltipProvider>
+        </DialogHeader>
+
+        {playlist.length > 1 && (
+          <div className="flex items-center justify-between gap-2 rounded-xl bg-muted/50 px-2 py-1.5">
+            <Button variant="ghost" size="sm" disabled={!hasPrev} onClick={() => onNavigate(index - 1)}>
+              <ChevronLeft /> Prev
+            </Button>
+            {counter && <span className="text-xs text-muted-foreground tabular-nums">{counter}</span>}
+            <Button variant="ghost" size="sm" disabled={!hasNext} onClick={() => onNavigate(index + 1)}>
+              Next <ChevronRight />
+            </Button>
+          </div>
+        )}
+
+        <PreviewContent token={token} node={node} kind={kind} onDownload={onDownload} onMediaStudio={onMediaStudio} />
+
+        {playlist.length > 1 && (
+          <div className="flex gap-2 overflow-auto pb-1" aria-label="Files in folder">
+            {playlist.map((n, i) => (
+              <button
+                key={n.id}
+                type="button"
+                aria-label={n.name}
+                aria-current={i === index ? "true" : undefined}
+                onClick={() => onNavigate(i)}
+                className={cn(
+                  "w-16 shrink-0 overflow-hidden rounded-xl border transition-all",
+                  i === index ? "border-ring ring-2 ring-ring/30" : "opacity-70 hover:opacity-100",
+                )}
+              >
+                <FileThumb token={token} id={n.id} name={n.name} mime={n.mime_type} isFolder={false} compact />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {(kind === "video" || kind === "image") && (
+          <Alert className="border-sky-200 bg-sky-50 text-sky-900">
+            <AlertDescription>
+              Tip: use ← → keys to browse, Media Studio to convert, Edit to trim & polish.
+            </AlertDescription>
+          </Alert>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

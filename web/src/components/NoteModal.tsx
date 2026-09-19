@@ -1,5 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { Portal } from "./Portal";
+import { useState } from "react";
+import { Bold, Italic, Link2, List } from "lucide-react";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type Props = {
   busy?: boolean;
@@ -50,32 +61,16 @@ export function NoteModal({ busy, onClose, onSave }: Props) {
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   function applyEdit(edit: { next: string; cursor: number }) {
     setBody(edit.next);
     if (!nameTouched) setName(suggestName(edit.next).replace(/\.txt$/i, ""));
-    requestAnimationFrame(() => {
-      const el = editorRef.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(edit.cursor, edit.cursor);
-    });
   }
 
   function format(action: "bold" | "italic" | "list" | "link") {
-    const el = editorRef.current;
-    if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
+    const el = document.getElementById("note-body") as HTMLTextAreaElement | null;
+    const start = el?.selectionStart ?? body.length;
+    const end = el?.selectionEnd ?? body.length;
     if (action === "list") {
       applyEdit(prefixLines(body, start, end, "- "));
       return;
@@ -98,87 +93,88 @@ export function NoteModal({ busy, onClose, onSave }: Props) {
 
   const words = body.trim() ? body.trim().split(/\s+/).length : 0;
 
+  const tools = [
+    { id: "bold", icon: Bold, tip: "Bold" },
+    { id: "italic", icon: Italic, tip: "Italic" },
+    { id: "list", icon: List, tip: "Bullet list" },
+    { id: "link", icon: Link2, tip: "Link" },
+  ] as const;
+
   return (
-    <Portal>
-      <div className="modal-backdrop note-editor-backdrop" role="presentation" onClick={onClose}>
-        <div
-          className="modal note-editor-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="note-modal-title"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <header className="note-editor-head">
-            <div className="note-editor-head-main">
-              <p className="eyebrow">New note</p>
-              <input
-                id="note-modal-title"
-                className="note-editor-title"
-                value={name}
-                onChange={(e) => {
-                  setNameTouched(true);
-                  setName(e.target.value);
-                }}
-                placeholder="Untitled"
-                autoComplete="off"
-                aria-label="Note title"
-              />
-            </div>
-            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
-              <i className="fa-solid fa-xmark" />
-            </button>
-          </header>
-
-          <div className="note-editor-toolbar" role="toolbar" aria-label="Formatting">
-            <button type="button" className="note-tool" title="Bold" onClick={() => format("bold")}>
-              <i className="fa-solid fa-bold" />
-            </button>
-            <button type="button" className="note-tool" title="Italic" onClick={() => format("italic")}>
-              <i className="fa-solid fa-italic" />
-            </button>
-            <button type="button" className="note-tool" title="Bullet list" onClick={() => format("list")}>
-              <i className="fa-solid fa-list-ul" />
-            </button>
-            <button type="button" className="note-tool" title="Link" onClick={() => format("link")}>
-              <i className="fa-solid fa-link" />
-            </button>
-            <span className="note-editor-hint meta">Markdown · Ctrl+Enter to save</span>
-          </div>
-
-          <div className="note-editor-body">
-            <textarea
-              ref={editorRef}
-              className="note-editor-input"
-              value={body}
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[620px]">
+        <DialogHeader className="space-y-3 px-5 pb-3 pt-5">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">New note</p>
+          <DialogTitle>
+            <Input
+              value={name}
               onChange={(e) => {
-                const v = e.target.value;
-                setBody(v);
-                if (!nameTouched) setName(suggestName(v).replace(/\.txt$/i, ""));
+                setNameTouched(true);
+                setName(e.target.value);
               }}
-              onKeyDown={(e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-              placeholder="Start writing, or paste a link…"
-              autoFocus
+              placeholder="Untitled"
+              autoComplete="off"
+              aria-label="Note title"
+              data-slot="note-title"
+              className="border-0 bg-transparent px-0 text-2xl font-semibold tracking-tight shadow-none focus-visible:ring-0"
             />
-          </div>
+          </DialogTitle>
+        </DialogHeader>
 
-          <footer className="note-editor-foot">
-            <span className="meta note-editor-meta">{words > 0 ? `${words} word${words === 1 ? "" : "s"}` : "Plain text"}</span>
-            <div className="row gap">
-              <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
-                Cancel
-              </button>
-              <button type="button" className="btn-create" disabled={busy || !body.trim()} onClick={submit}>
-                Save to folder
-              </button>
-            </div>
-          </footer>
+        <TooltipProvider>
+          <div className="flex items-center gap-0.5 border-y bg-muted/40 px-4 py-1.5" role="toolbar" aria-label="Formatting">
+            {tools.map((t) => (
+              <Tooltip key={t.id}>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={() => format(t.id)}>
+                    <t.icon className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t.tip}</TooltipContent>
+              </Tooltip>
+            ))}
+            <span className="ml-auto hidden text-xs text-muted-foreground sm:block">
+              Markdown · Ctrl+Enter to save
+            </span>
+          </div>
+        </TooltipProvider>
+
+        <div className="p-2">
+          <Textarea
+            id="note-body"
+            value={body}
+            onChange={(e) => {
+              const v = e.target.value;
+              setBody(v);
+              if (!nameTouched) setName(suggestName(v).replace(/\.txt$/i, ""));
+            }}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="Start writing, or paste a link…"
+            autoFocus
+            rows={10}
+            className="min-h-[240px] resize-none border-0 shadow-none focus-visible:ring-0"
+          />
         </div>
-      </div>
-    </Portal>
+
+        <DialogFooter className="items-center gap-2 border-t bg-muted/30 px-5 py-3.5 sm:justify-between">
+          <span className="text-xs text-muted-foreground">
+            {words > 0 ? `${words} word${words === 1 ? "" : "s"}` : "Plain text"}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button disabled={busy || !body.trim()} onClick={submit}>
+              Save to folder
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

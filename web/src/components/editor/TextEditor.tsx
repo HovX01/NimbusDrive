@@ -1,4 +1,10 @@
+import { Move, Palette, Type } from "lucide-react";
 import type { TimelineClip, TextOverlay } from "../../api";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { Select } from "../ui/select";
+import { Slider } from "../ui/slider";
+import { Textarea } from "../ui/textarea";
 
 type Props = {
   clip: TimelineClip | null;
@@ -21,13 +27,15 @@ const DEFAULT_TEXT: TextOverlay = {
 export function TextEditor({ clip, kind, onChange }: Props) {
   if (!clip) {
     return (
-      <aside className="editor-property-panel">
-        <div className="editor-property-tabs" aria-hidden="true">
-          <span className="active"><i className="fa-solid fa-font" /></span>
+      <aside className="grid min-h-0 grid-cols-[46px_minmax(0,1fr)] overflow-hidden rounded-2xl border bg-card">
+        <div className="flex flex-col gap-1.5 border-r bg-muted/40 p-1.5" aria-hidden="true">
+          <span className="grid h-[34px] w-[34px] place-items-center rounded-lg bg-card text-foreground shadow-xs">
+            <Type className="h-4 w-4" />
+          </span>
         </div>
-        <div className="editor-inspector text-editor">
-          <p className="editor-panel-title">{kind === "caption" ? "Caption" : "Text"}</p>
-          <p className="editor-muted">Select a text clip.</p>
+        <div className="grid content-start gap-3.5 overflow-auto p-3.5">
+          <p className="text-sm font-semibold">{kind === "caption" ? "Caption" : "Text"}</p>
+          <p className="text-xs text-muted-foreground">Select a text clip.</p>
         </div>
       </aside>
     );
@@ -35,82 +43,82 @@ export function TextEditor({ clip, kind, onChange }: Props) {
   const text = { ...DEFAULT_TEXT, ...(clip.text ?? {}) };
   const patchText = (patch: Partial<TextOverlay>) => onChange(clip.id, { text: { ...text, ...patch } });
   return (
-    <aside className="editor-property-panel">
-      <div className="editor-property-tabs" aria-label="Text property sections">
-        <button type="button" className="active" title="Content"><i className="fa-solid fa-font" /></button>
-        <button type="button" title="Style"><i className="fa-solid fa-palette" /></button>
-        <button type="button" title="Position"><i className="fa-solid fa-arrows-up-down-left-right" /></button>
+    <aside className="grid min-h-0 grid-cols-[46px_minmax(0,1fr)] overflow-hidden rounded-2xl border bg-card">
+      <div className="flex flex-col gap-1.5 border-r bg-muted/40 p-1.5" aria-label="Text property sections">
+        <button type="button" className="grid h-[34px] w-[34px] place-items-center rounded-lg bg-card text-foreground shadow-xs" title="Content"><Type className="h-4 w-4" /></button>
+        <button type="button" className="grid h-[34px] w-[34px] place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" title="Style"><Palette className="h-4 w-4" /></button>
+        <button type="button" className="grid h-[34px] w-[34px] place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" title="Position"><Move className="h-4 w-4" /></button>
       </div>
-      <div className="editor-inspector text-editor">
-      <div className="editor-panel-head">
-        <div>
-          <p className="editor-panel-title">{kind === "caption" ? "Caption" : "Text"}</p>
-          <p className="editor-muted">Style and position the selected overlay.</p>
+      <div className="grid min-h-0 content-start gap-3.5 overflow-auto p-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{kind === "caption" ? "Caption" : "Text"}</p>
+          <p className="text-xs text-muted-foreground">Style and position the selected overlay.</p>
         </div>
       </div>
-      <div className="editor-section">
-        <span className="editor-section-title">Content</span>
-        <label>
+      <div className="grid gap-3 rounded-xl border bg-muted/30 p-3.5">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Content</span>
+        <Label className="grid gap-1.5">
           Text
-          <textarea value={text.content} rows={4} onChange={(e) => patchText({ content: e.target.value })} />
-        </label>
-        <div className="editor-two-col">
-          <label>
+          <Textarea value={text.content} rows={4} onChange={(e) => patchText({ content: e.target.value })} />
+        </Label>
+        <div className="grid grid-cols-2 gap-2.5">
+          <Label className="grid gap-1.5">
             Start
-            <input type="number" min={0} step={0.05} value={clip.startOnTimeline} onChange={(e) => onChange(clip.id, { startOnTimeline: Number(e.target.value) })} />
-          </label>
-          <label>
+            <Input type="number" min={0} step={0.05} value={clip.startOnTimeline} onChange={(e) => onChange(clip.id, { startOnTimeline: Number(e.target.value) })} />
+          </Label>
+          <Label className="grid gap-1.5">
             Duration
-            <input type="number" min={0.1} step={0.05} value={clip.endInSource - clip.startInSource} onChange={(e) => onChange(clip.id, { endInSource: clip.startInSource + Number(e.target.value) })} />
-          </label>
+            <Input type="number" min={0.1} step={0.05} value={clip.endInSource - clip.startInSource} onChange={(e) => onChange(clip.id, { endInSource: clip.startInSource + Number(e.target.value) })} />
+          </Label>
         </div>
       </div>
-      <div className="editor-section">
-        <span className="editor-section-title">Style</span>
-        <label>
-          Font size
-          <input type="range" min={12} max={200} value={text.font_size} onChange={(e) => patchText({ font_size: Number(e.target.value) })} />
-        </label>
-        <div className="editor-two-col">
-          <label>
-            Text color
-            <input type="color" value={cssColorToHex(text.color, "#ffffff")} onChange={(e) => patchText({ color: e.target.value })} />
-          </label>
-          <label>
-            Background
-            <input type="color" value={cssColorToHex(text.bg_color, "#000000")} onChange={(e) => patchText({ bg_color: `${e.target.value}cc` })} />
-          </label>
+      <div className="grid gap-3 rounded-xl border bg-muted/30 p-3.5">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Style</span>
+        <div className="grid gap-1.5">
+          <Label>Font size</Label>
+          <Slider min={12} max={200} value={text.font_size} onChange={(e) => patchText({ font_size: Number(e.target.value) })} />
         </div>
-        <label>
+        <div className="grid grid-cols-2 gap-2.5">
+          <Label className="grid gap-1.5">
+            Text color
+            <Input type="color" className="h-10 cursor-pointer p-1" value={cssColorToHex(text.color, "#ffffff")} onChange={(e) => patchText({ color: e.target.value })} />
+          </Label>
+          <Label className="grid gap-1.5">
+            Background
+            <Input type="color" className="h-10 cursor-pointer p-1" value={cssColorToHex(text.bg_color, "#000000")} onChange={(e) => patchText({ bg_color: `${e.target.value}cc` })} />
+          </Label>
+        </div>
+        <Label className="grid gap-1.5">
           Align
-          <select value={text.alignment} onChange={(e) => patchText({ alignment: e.target.value as TextOverlay["alignment"] })}>
+          <Select value={text.alignment} onChange={(e) => patchText({ alignment: e.target.value as TextOverlay["alignment"] })}>
             <option value="center">Center</option>
             <option value="left">Left</option>
             <option value="right">Right</option>
-          </select>
-        </label>
+          </Select>
+        </Label>
       </div>
-      <div className="editor-section">
-        <span className="editor-section-title">Position & Motion</span>
-        <div className="editor-two-col">
-          <label>
-            X
-            <input type="range" min={0} max={1} step={0.01} value={text.x} onChange={(e) => patchText({ x: Number(e.target.value) })} />
-          </label>
-          <label>
-            Y
-            <input type="range" min={0} max={1} step={0.01} value={text.y} onChange={(e) => patchText({ y: Number(e.target.value) })} />
-          </label>
+      <div className="grid gap-3 rounded-xl border bg-muted/30 p-3.5">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Position &amp; Motion</span>
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid gap-1.5">
+            <Label>X</Label>
+            <Slider min={0} max={1} step={0.01} value={text.x} onChange={(e) => patchText({ x: Number(e.target.value) })} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Y</Label>
+            <Slider min={0} max={1} step={0.01} value={text.y} onChange={(e) => patchText({ y: Number(e.target.value) })} />
+          </div>
         </div>
-        <label>
+        <Label className="grid gap-1.5">
           Animation
-          <select value={text.animation} onChange={(e) => patchText({ animation: e.target.value as TextOverlay["animation"] })}>
+          <Select value={text.animation} onChange={(e) => patchText({ animation: e.target.value as TextOverlay["animation"] })}>
             <option value="none">None</option>
             <option value="fade">Fade</option>
             <option value="slide-up">Slide up</option>
             <option value="typewriter">Typewriter</option>
-          </select>
-        </label>
+          </Select>
+        </Label>
       </div>
       </div>
     </aside>

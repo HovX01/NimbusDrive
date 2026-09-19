@@ -1,5 +1,23 @@
 import { useEffect } from "react";
+import {
+  Archive,
+  Check,
+  CircleAlert,
+  Clock,
+  CloudUpload,
+  File as FileIcon,
+  FileText,
+  FileImage,
+  FileVideo,
+  Folder,
+  Loader2,
+  Music,
+  X,
+} from "lucide-react";
 import { formatBytes, previewKind, type PreviewKind } from "../lib/files";
+import { cn } from "@/lib/utils";
+import { Button } from "./ui/button";
+import { Progress } from "./ui/progress";
 
 export type UploadJob = {
   id: string;
@@ -10,15 +28,15 @@ export type UploadJob = {
   error?: string;
 };
 
-const KIND_ICON: Record<PreviewKind, string> = {
-  folder: "fa-solid fa-folder",
-  image: "fa-solid fa-image",
-  video: "fa-solid fa-film",
-  audio: "fa-solid fa-music",
-  pdf: "fa-solid fa-file-pdf",
-  text: "fa-solid fa-file-lines",
-  archive: "fa-solid fa-file-zipper",
-  file: "fa-solid fa-file",
+const KIND_ICON: Record<PreviewKind, typeof FileIcon> = {
+  folder: Folder,
+  image: FileImage,
+  video: FileVideo,
+  audio: Music,
+  pdf: FileText,
+  text: FileText,
+  archive: Archive,
+  file: FileIcon,
 };
 
 type Props = {
@@ -28,8 +46,6 @@ type Props = {
 };
 
 export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
-  if (!jobs.length) return null;
-
   const active = jobs.filter(
     (j) => j.status === "queued" || j.status === "uploading" || j.status === "processing",
   ).length;
@@ -38,57 +54,65 @@ export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
   const allSettled = active === 0;
 
   useEffect(() => {
+    if (!jobs.length) return;
     if (!allSettled || failed > 0) return;
     const timer = window.setTimeout(onClose, 2000);
     return () => window.clearTimeout(timer);
-  }, [allSettled, failed, onClose]);
+  }, [allSettled, failed, onClose, jobs.length]);
+
+  if (!jobs.length) return null;
 
   return (
-    <div className="upload-panel" role="status" aria-live="polite">
-      <div className="upload-panel-head">
-        <div className="upload-panel-title">
-          <i
-            className={`fa-solid ${
-              allSettled
-                ? failed
-                  ? "fa-circle-exclamation"
-                  : "fa-circle-check"
-                : "fa-cloud-arrow-up"
-            }`}
-          />
-          <div>
-            <strong>
-              {allSettled
-                ? failed
-                  ? `${failed} failed`
-                  : "Upload complete"
-                : `Uploading ${Math.min(done + failed + 1, jobs.length)} of ${jobs.length}`}
-            </strong>
-            <p className="meta">
-              {allSettled
-                ? `${done} done${failed ? ` · ${failed} error${failed === 1 ? "" : "s"}` : ""}`
-                : `${active} in progress`}
-            </p>
-          </div>
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-4 right-4 z-[1050] w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border bg-card shadow-xl"
+    >
+      <div className="flex items-center gap-3 border-b bg-muted/40 px-4 py-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          {allSettled ? (
+            failed ? (
+              <CircleAlert className="h-4 w-4" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )
+          ) : (
+            <CloudUpload className="h-4 w-4" />
+          )}
         </div>
-        <button type="button" className="icon-btn" aria-label="Close upload panel" onClick={onClose}>
-          <i className="fa-solid fa-xmark" />
-        </button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">
+            {allSettled
+              ? failed
+                ? `${failed} upload${failed === 1 ? "" : "s"} failed`
+                : "Upload complete — all cozy!"
+              : `Uploading ${Math.min(done + failed + 1, jobs.length)} of ${jobs.length}`}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {allSettled
+              ? `${done} done${failed ? ` · ${failed} error${failed === 1 ? "" : "s"}` : ""}`
+              : `${active} in progress`}
+          </p>
+        </div>
+        <Button variant="ghost" size="icon-sm" aria-label="Close upload panel" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
       </div>
 
-      <ul className="upload-list">
+      <ul className="max-h-[320px] divide-y overflow-auto">
         {jobs.map((job) => {
           const kind = previewKind(job.name, "", false);
+          const Icon = KIND_ICON[kind];
           return (
-            <li key={job.id} className={`upload-row status-${job.status}`}>
-              <div className="upload-file-ico" aria-hidden>
-                <i className={KIND_ICON[kind]} />
+            <li key={job.id} className="flex items-start gap-3 px-4 py-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+                <Icon className="h-4 w-4" />
               </div>
-              <div className="upload-file-meta">
-                <div className="upload-file-name truncate" title={job.name}>
+              <div className="grid min-w-0 flex-1 gap-1">
+                <p className="truncate text-[13px] font-medium" title={job.name}>
                   {job.name}
-                </div>
-                <div className="meta">
+                </p>
+                <p className="text-xs text-muted-foreground">
                   {job.status === "error"
                     ? job.error || "Failed"
                     : job.status === "done"
@@ -98,36 +122,32 @@ export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
                         : job.status === "uploading"
                           ? `${job.progress}% · ${formatBytes(job.size)}`
                           : `Queued · ${formatBytes(job.size)}`}
-                </div>
+                </p>
                 {(job.status === "uploading" ||
                   job.status === "queued" ||
                   job.status === "processing") && (
-                  <div className="upload-bar" aria-hidden>
-                    <div
-                      className={`upload-bar-fill ${
-                        job.status === "queued" || job.status === "processing" ? "indeterminate" : ""
-                      }`}
-                      style={job.status === "uploading" ? { width: `${job.progress}%` } : undefined}
-                    />
-                  </div>
+                  <Progress
+                    value={job.status === "uploading" ? job.progress : job.status === "processing" ? 100 : 8}
+                    className={cn(job.status !== "uploading" && "opacity-70")}
+                  />
                 )}
               </div>
-              <div className="upload-row-status">
+              <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
                 {(job.status === "uploading" || job.status === "processing") && (
-                  <i className="fa-solid fa-spinner fa-spin" title={job.status === "processing" ? "Saving" : "Uploading"} />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                {job.status === "queued" && <i className="fa-regular fa-clock" />}
-                {job.status === "done" && <i className="fa-solid fa-check" />}
-                {job.status === "error" && <i className="fa-solid fa-triangle-exclamation" />}
+                {job.status === "queued" && <Clock className="h-4 w-4" />}
+                {job.status === "done" && <Check className="h-4 w-4 text-green-600" />}
+                {job.status === "error" && <CircleAlert className="h-4 w-4 text-destructive" />}
                 {allSettled && (
-                  <button
-                    type="button"
-                    className="icon-btn tiny"
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label={`Dismiss ${job.name}`}
                     onClick={() => onDismiss(job.id)}
                   >
-                    <i className="fa-solid fa-xmark" />
-                  </button>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
                 )}
               </div>
             </li>

@@ -1,4 +1,19 @@
 import { useEffect, useState } from "react";
+import { CloudDownload, FileUp } from "lucide-react";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Label } from "./ui/label";
+import { Progress } from "./ui/progress";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { Textarea } from "./ui/textarea";
+import { cn } from "@/lib/utils";
 
 type Kind = "media" | "file";
 
@@ -44,14 +59,6 @@ export function FetchModal({
     if (initialUrl.trim()) setUrl(initialUrl.trim());
   }, [initialUrl]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, busy]);
-
   const urls = parseFetchURLs(url);
 
   function submit() {
@@ -70,113 +77,99 @@ export function FetchModal({
   const pct = Math.max(0, Math.min(100, Math.round(progress)));
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={() => !busy && onClose()}>
-      <div
-        className="modal note-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="fetch-modal-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="modal-head">
-          <div>
-            <h2 id="fetch-modal-title">Fetch from link</h2>
-            <p className="meta">
-              {kind === "media"
-                ? "Paste one or more links (line or space separated). Highest quality by default; large videos compress automatically; duplicates are skipped."
-                : "One or more direct file URLs (image, PDF, etc.)."}
-            </p>
-          </div>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose} disabled={busy}>
-            <i className="fa-solid fa-xmark" />
-          </button>
-        </header>
-        <div className="note-modal-body stack">
-          <div className="fetch-kind-tabs" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              className={kind === "media" ? "active" : ""}
-              aria-selected={kind === "media"}
-              disabled={busy}
-              onClick={() => setKind("media")}
-            >
-              Photos & video
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={kind === "file" ? "active" : ""}
-              aria-selected={kind === "file"}
-              disabled={busy}
-              onClick={() => setKind("file")}
-            >
-              Direct file URL
-            </button>
-          </div>
-          <label>
-            URL{urls.length > 1 ? `s (${urls.length})` : ""}
-            <textarea
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder={
-                kind === "file"
-                  ? "https://example.com/photo.jpg\nhttps://…"
-                  : "https://…\nhttps://… (one per line)"
-              }
-              rows={4}
-              autoFocus
-              disabled={busy}
-            />
-          </label>
-          {kind === "media" && (
-            <div className="row gap">
-              <label style={{ flex: 1 }}>
-                Save as
-                <select
-                  value={mode}
-                  onChange={(e) => setMode(e.target.value as "video" | "audio")}
-                  disabled={busy}
-                >
-                  <option value="video">Photos & video</option>
-                  <option value="audio">Audio only (mp3)</option>
-                </select>
-              </label>
-              <label style={{ flex: 1 }}>
-                Max video height
-                <select
-                  value={maxHeight}
-                  onChange={(e) => setMaxHeight(e.target.value)}
-                  disabled={busy || mode === "audio"}
-                >
-                  <option value="max">Original (max)</option>
-                  <option value="2160">4K</option>
-                  <option value="1440">1440p</option>
-                  <option value="1080">1080p</option>
-                  <option value="720">720p</option>
-                  <option value="480">480p</option>
-                  <option value="360">360p (fastest)</option>
-                </select>
-              </label>
-            </div>
-          )}
-          {busy && (
-            <div className="fetch-progress" aria-live="polite">
-              <div className="fetch-progress-meta">
-                <span>{message || "Working…"}</span>
-                <strong>{pct}%</strong>
-              </div>
-              <div className="fetch-progress-track">
-                <div className="fetch-progress-bar" style={{ width: `${pct}%` }} />
-              </div>
-            </div>
-          )}
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>Fetch from link</DialogTitle>
+          <DialogDescription>
+            {kind === "media"
+              ? "Paste links — highest quality by default, duplicates are skipped. Cozy!"
+              : "Direct file URLs (images, PDFs, etc.)."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <Tabs value={kind} onValueChange={(v) => setKind(v as Kind)}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="media" disabled={busy}>
+              <CloudDownload className="mr-1.5 h-4 w-4" /> Photos & video
+            </TabsTrigger>
+            <TabsTrigger value="file" disabled={busy}>
+              <FileUp className="mr-1.5 h-4 w-4" /> Direct file
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="fetch-urls">URL{urls.length > 1 ? `s (${urls.length})` : ""}</Label>
+          <Textarea
+            id="fetch-urls"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder={kind === "file" ? "https://example.com/photo.jpg" : "https://… (one per line)"}
+            rows={4}
+            autoFocus
+            disabled={busy}
+          />
         </div>
-        <footer className="modal-foot row end gap">
-          <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
+
+        {kind === "media" && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label>Save as</Label>
+              <div className="flex gap-1.5 rounded-xl bg-muted p-1">
+                {(["video", "audio"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setMode(m)}
+                    className={cn(
+                      "flex-1 rounded-lg px-2 py-1.5 text-[13px] font-medium transition-colors",
+                      mode === m ? "bg-card shadow-xs" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {m === "video" ? "Video" : "Audio"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="fetch-quality">Quality</Label>
+              <select
+                id="fetch-quality"
+                data-slot="select"
+                value={maxHeight}
+                onChange={(e) => setMaxHeight(e.target.value)}
+                disabled={busy || mode === "audio"}
+                className="h-10 w-full rounded-xl border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                <option value="max">Original (max)</option>
+                <option value="2160">4K</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p (fastest)</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {busy && (
+          <div className="grid gap-2" aria-live="polite">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">{message || "Working…"}</span>
+              <strong className="tabular-nums">{pct}%</strong>
+            </div>
+            <Progress value={pct} />
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button type="button" className="btn" disabled={busy || !urls.length} onClick={submit}>
+          </Button>
+          <Button disabled={busy || !urls.length} onClick={submit}>
             {busy
               ? `${pct}%`
               : kind === "file"
@@ -186,9 +179,9 @@ export function FetchModal({
                 : urls.length > 1
                   ? `Fetch ${urls.length}`
                   : "Fetch to Drive"}
-          </button>
-        </footer>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

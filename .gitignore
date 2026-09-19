@@ -34,3 +34,6 @@ testAPI/node_modules/
 *.swp
 .DS_Store
 Thumbs.db
+
+# local preview scratch
+web/.preview/

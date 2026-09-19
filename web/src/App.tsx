@@ -35,15 +35,17 @@ import {
 import { AccessKeyScreen, BootScreen, LoginScreen, SetupScreen } from "./components/AuthScreens";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DriveShell } from "./components/DriveShell";
+import { PromptDialog } from "./components/PromptDialog";
 import { ShareModal } from "./components/ShareModal";
-import { SettingsModal } from "./components/SettingsModal";
-import { S3BucketsModal } from "./components/S3BucketsModal";
 import { SendTelegramModal } from "./components/SendTelegramModal";
-import { ToastStack, type Toast, type ToastKind } from "./components/ToastStack";
+import { Toaster } from "./components/ui/sonner";
+import { toast } from "sonner";
 import { UploadPanel, type UploadJob } from "./components/UploadPanel";
 import { extractSharedURL, isShareTargetPath } from "./lib/shareTarget";
 
 const TOKEN_KEY = "nimbus_token";
+
+type ToastKind = "success" | "error" | "info";
 
 type ConfirmState = {
   title: string;
@@ -66,7 +68,7 @@ export default function App() {
   ]);
   const [items, setItems] = useState<Node[]>([]);
   const [trashItems, setTrashItems] = useState<Node[]>([]);
-  const [section, setSection] = useState<"drive" | "trash">("drive");
+  const [section, setSection] = useState<"drive" | "trash" | "settings" | "buckets">("drive");
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
   const [sendTarget, setSendTarget] = useState<{ id: string; name: string } | null>(null);
   const [shares, setShares] = useState<ShareInfo[]>([]);
@@ -76,10 +78,11 @@ export default function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploads, setUploads] = useState<UploadJob[]>([]);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+
+
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [s3BucketsOpen, setS3BucketsOpen] = useState(false);
+  const [mkdirOpen, setMkdirOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
   const [sharedFetchUrl, setSharedFetchUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -93,11 +96,9 @@ export default function App() {
   }, []);
 
   function pushToast(message: string, kind: ToastKind = "info") {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setToasts((prev) => [...prev, { id, message, kind }]);
-    window.setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4200);
+    if (kind === "success") toast.success(message);
+    else if (kind === "error") toast.error(message);
+    else toast(message);
   }
 
   function askConfirm(state: ConfirmState) {
@@ -356,13 +357,18 @@ export default function App() {
 
   async function onMkdir() {
     if (!token) return;
-    const name = window.prompt("Folder name");
-    if (!name?.trim()) return;
+    setMkdirOpen(true);
+  }
+
+  async function doMkdir(name: string) {
+    if (!token) return;
+    setMkdirOpen(false);
     setBusy(true);
     try {
       await mkdir(token, parentId, name.trim());
       const r = await listFiles(token, parentId);
       setItems(r.items ?? []);
+      pushToast(`Created “${name.trim()}”`, "success");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -511,10 +517,17 @@ export default function App() {
 
   async function onRename(id: string, currentName: string) {
     if (!token) return;
-    const next = window.prompt("Rename", currentName);
-    if (next == null) return;
-    const name = next.trim();
-    if (!name || name === currentName) return;
+    setRenameTarget({ id, name: currentName });
+  }
+
+  async function doRename(name: string) {
+    if (!token || !renameTarget) return;
+    const { id, name: currentName } = renameTarget;
+    if (!name || name === currentName) {
+      setRenameTarget(null);
+      return;
+    }
+    setRenameTarget(null);
     setBusy(true);
     try {
       await renameNode(token, id, name);
@@ -693,7 +706,7 @@ export default function App() {
     }
   }
 
-  function onSectionChange(next: "drive" | "trash") {
+  function onSectionChange(next: "drive" | "trash" | "settings" | "buckets") {
     setSection(next);
     if (next === "trash") void refreshTrash();
   }
@@ -826,8 +839,6 @@ export default function App() {
         onMkdir={onMkdir}
         onFetchURL={onFetchURL}
         onImportURL={onImportURL}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenS3Buckets={() => setS3BucketsOpen(true)}
         onUpload={onUpload}
         onDownload={onDownload}
         onRename={onRename}
@@ -865,12 +876,6 @@ export default function App() {
           onSend={onSendTelegram}
         />
       )}
-      {settingsOpen && token && (
-        <SettingsModal token={token} onClose={() => setSettingsOpen(false)} />
-      )}
-      {s3BucketsOpen && token && (
-        <S3BucketsModal token={token} onClose={() => setS3BucketsOpen(false)} />
-      )}
       {shareTarget && (
         <ShareModal
           fileName={shareTarget.name}
@@ -895,7 +900,30 @@ export default function App() {
           onConfirm={confirm.onConfirm}
         />
       )}
-      <ToastStack items={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
+      <PromptDialog
+        open={mkdirOpen}
+        title="New folder"
+        description="Give your new folder a cozy name."
+        label="Folder name"
+        placeholder="e.g. Vacation photos"
+        confirmLabel="Create folder"
+        busy={busy}
+        onClose={() => setMkdirOpen(false)}
+        onConfirm={(name) => void doMkdir(name)}
+      />
+      <PromptDialog
+        open={renameTarget !== null}
+        title="Rename"
+        description={renameTarget ? `Rename “${renameTarget.name}”.` : undefined}
+        label="Name"
+        placeholder="New name"
+        initialValue={renameTarget?.name ?? ""}
+        confirmLabel="Rename"
+        busy={busy}
+        onClose={() => setRenameTarget(null)}
+        onConfirm={(name) => void doRename(name)}
+      />
+      <Toaster />
       <UploadPanel jobs={uploads} onClose={clearUploads} onDismiss={dismissUpload} />
     </>
   );
