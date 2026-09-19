@@ -133,8 +133,21 @@ export default function App() {
         if (cancelled) return;
         const required = s.access_key_required !== false;
         setAccessKeyRequired(required);
-        if (!required || getAccessKey()) {
+        if (!required) {
           setAccessReady(true);
+          return;
+        }
+        // Trust a stored key only after the server confirms it, otherwise a
+        // stale key silently gates every later request behind a 401.
+        const stored = getAccessKey();
+        if (!stored) return;
+        try {
+          await validateAccessKey(stored);
+          if (cancelled) return;
+          setAccessReady(true);
+        } catch (e) {
+          if (cancelled) return;
+          if (isAccessKeyError((e as Error).message)) clearAccessKey();
         }
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
