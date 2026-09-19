@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"fmt"
 	"strings"
 	"time"
 
@@ -724,6 +724,88 @@ func scanNode(row scanner) (domain.Node, error) {
 	n.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	n.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	return n, nil
+}
+
+// StorageStats aggregates drive consumption for the dashboard. The daily
+// series is derived from created_at, so no sampling table or write path is
+// needed; it reflects upload activity, not historical totals.
+func (s *Store) StorageStats(ctx context.Context, days int) (domain.StorageStats, error) {
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	var st domain.StorageStats
+	err := s.db.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(CASE WHEN type = 'file' AND status != 'deleted' THEN size END), 0),
+  COALESCE(SUM(CASE WHEN type = 'file' AND status != 'deleted' THEN 1 END), 0),
+  COALESCE(SUM(CASE WHEN type = 'folder' AND status != 'deleted' THEN 1 END), 0),
+  COALESCE(SUM(CASE WHEN status = 'deleted' AND type = 'file' THEN size END), 0),
+  COALESCE(SUM(CASE WHEN status = 'deleted' AND type = 'file' THEN 1 END), 0)
+FROM nodes WHERE id != 'root'`).Scan(
+		&st.TotalBytes, &st.TotalFiles, &st.TotalFolders, &st.TrashBytes, &st.TrashFiles)
+	if err != nil {
+		return st, err
+	}
+
+	kinds, err := s.db.QueryContext(ctx, `
+SELECT CASE
+    WHEN mime_type LIKE 'video/%' THEN 'video'
+    WHEN mime_type LIKE 'image/%' THEN 'image'
+    WHEN mime_type LIKE 'audio/%' THEN 'audio'
+    ELSE 'other' END,
+  COUNT(*), COALESCE(SUM(size), 0)
+FROM nodes WHERE type = 'file' AND status = 'ready' GROUP BY 1 ORDER BY 3 DESC`)
+	if err != nil {
+		return st, err
+	}
+	defer kinds.Close()
+	for kinds.Next() {
+		var k domain.StorageKindStats
+		if err := kinds.Scan(&k.Kind, &k.Count, &k.Bytes); err != nil {
+			return st, err
+		}
+		st.ByKind = append(st.ByKind, k)
+	}
+	if err := kinds.Err(); err != nil {
+		return st, err
+	}
+
+	chans, err := s.db.QueryContext(ctx, `
+SELECT channel_id, COUNT(*), COALESCE(SUM(size), 0)
+FROM nodes WHERE type = 'file' AND status = 'ready' AND channel_id != 0
+GROUP BY channel_id ORDER BY 3 DESC`)
+	if err != nil {
+		return st, err
+	}
+	defer chans.Close()
+	for chans.Next() {
+		var c domain.StorageBucketStats
+		if err := chans.Scan(&c.ChannelID, &c.Count, &c.Bytes); err != nil {
+			return st, err
+		}
+		st.ByChannel = append(st.ByChannel, c)
+	}
+	if err := chans.Err(); err != nil {
+		return st, err
+	}
+
+	daily, err := s.db.QueryContext(ctx, `
+SELECT date(created_at), COUNT(*), COALESCE(SUM(size), 0)
+FROM nodes
+WHERE type = 'file' AND status != 'deleted' AND created_at >= date('now', '-' || ? || ' days')
+GROUP BY 1 ORDER BY 1`, days-1)
+	if err != nil {
+		return st, err
+	}
+	defer daily.Close()
+	for daily.Next() {
+		var d domain.DayPoint
+		if err := daily.Scan(&d.Day, &d.Count, &d.Bytes); err != nil {
+			return st, err
+		}
+		st.Daily = append(st.Daily, d)
+	}
+	return st, daily.Err()
 }
 
 // Ensure Store implements ports.

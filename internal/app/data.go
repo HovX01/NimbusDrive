@@ -86,3 +86,11 @@ func DataRowsJSON(rows []domain.DataRow) []map[string]any {
 	}
 	return out
 }
+
+// StorageStats returns aggregated drive consumption for the dashboard.
+func (s *Services) StorageStats(ctx context.Context, days int) (domain.StorageStats, error) {
+	if s.Nodes == nil {
+		return domain.StorageStats{}, domain.ErrNotConfigured
+	}
+	return s.Nodes.StorageStats(ctx, days)
+}

@@ -366,6 +366,27 @@ export async function fetchStorageSettings(token: string) {
   );
 }
 
+export type StorageKindStats = { kind: string; count: number; bytes: number };
+export type StorageBucketStats = { channel_id: number; count: number; bytes: number };
+export type DayPoint = { day: string; count: number; bytes: number };
+
+export type StorageStats = {
+  total_bytes: number;
+  total_files: number;
+  total_folders: number;
+  trash_bytes: number;
+  trash_files: number;
+  by_kind: StorageKindStats[] | null;
+  by_channel: StorageBucketStats[] | null;
+  daily: DayPoint[] | null;
+};
+
+export async function fetchStorageStats(token: string, days = 30) {
+  return parse<StorageStats>(
+    await fetch(`${API}/api/v1/stats/storage?days=${days}`, { headers: authHeaders(token) }),
+  );
+}
+
 export type BackupSettings = {
   enabled: boolean;
   endpoint: string;

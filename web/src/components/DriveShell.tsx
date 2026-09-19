@@ -12,6 +12,7 @@ import {
   FolderPlus,
   HardDrive,
   KeyRound,
+  LayoutDashboard,
   LayoutGrid,
   Link2,
   List as ListIcon,
@@ -32,6 +33,7 @@ import {
 } from "lucide-react";
 import { searchFiles, type Node, type SearchHit, type User } from "../api";
 import { formatBytes, isPreviewable, previewKind } from "../lib/files";
+import { DashboardPage } from "./DashboardPage";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./BrandMark";
 import { DriveCard } from "./DriveCard";
@@ -67,7 +69,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 type Crumb = { id: string; name: string };
 type ViewMode = "grid" | "list";
 
-type Section = "drive" | "trash" | "settings" | "buckets";
+type Section = "drive" | "trash" | "settings" | "buckets" | "dashboard";
 
 type Props = {
   token: string;
@@ -439,6 +441,7 @@ export function DriveShell(props: Props) {
   const navItems = [
     { id: "drive", label: "My Drive", icon: HardDrive, active: section === "drive", run: goDrive },
     { id: "trash", label: "Trash", icon: Trash2, active: section === "trash", run: goTrash },
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, active: section === "dashboard", run: () => { onSectionChange("dashboard"); setQuery(""); setHits(null); setMenuOpen(false); } },
     { id: "api", label: "Storage API", icon: KeyRound, active: section === "settings", run: () => { onSectionChange("settings"); setQuery(""); setHits(null); setMenuOpen(false); } },
     { id: "s3", label: "S3 Buckets", icon: Boxes, active: section === "buckets", run: () => { onSectionChange("buckets"); setQuery(""); setHits(null); setMenuOpen(false); } },
   ];
@@ -524,6 +527,8 @@ export function DriveShell(props: Props) {
             <SettingsPage token={token} />
           ) : section === "buckets" ? (
             <S3BucketsPage token={token} />
+          ) : section === "dashboard" ? (
+            <DashboardPage token={token} />
           ) : (
           <>
           <header className="mb-3 hidden flex-wrap items-center gap-2.5 lg:flex">
@@ -1008,6 +1013,25 @@ export function DriveShell(props: Props) {
                 </>
               ) : (
                 <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDockSheet(null);
+                      onSectionChange("dashboard");
+                      setQuery("");
+                      setHits(null);
+                    }}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-muted">
+                      <LayoutDashboard className="h-4 w-4" />
+                    </span>
+                    <span className="grid">
+                      <strong className="text-sm">Dashboard</strong>
+                      <small className="text-xs text-muted-foreground">Storage stats</small>
+                    </span>
+                  </button>
                   <button
                     type="button"
                     role="menuitem"

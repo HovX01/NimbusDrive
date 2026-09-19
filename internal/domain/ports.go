@@ -25,6 +25,7 @@ type NodeRepository interface {
 	FindByContentHash(ctx context.Context, hash string) (Node, error)
 	SetContentHash(ctx context.Context, nodeID, hash string) error
 	Search(ctx context.Context, query string, limit int) ([]SearchHit, error)
+	StorageStats(ctx context.Context, days int) (StorageStats, error)
 }
 
 // PartRepository persists Telegram message mappings for file bytes.

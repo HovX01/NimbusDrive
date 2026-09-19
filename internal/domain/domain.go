@@ -154,3 +154,39 @@ type SocialOAuthAppConfig struct {
 	Configured    bool           `json:"configured"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
+
+// StorageKindStats breaks down storage consumption by file kind.
+type StorageKindStats struct {
+	Kind  string `json:"kind"`
+	Count int64  `json:"count"`
+	Bytes int64  `json:"bytes"`
+}
+
+// StorageBucketStats breaks down storage consumption by the Telegram channel
+// files are stored in. This is the closest thing to a "bucket" in the core
+// drive; S3 buckets live in the separate s3gw gateway.
+type StorageBucketStats struct {
+	ChannelID int64 `json:"channel_id"`
+	Count     int64 `json:"count"`
+	Bytes     int64 `json:"bytes"`
+}
+
+// DayPoint is one day of the storage time series.
+type DayPoint struct {
+	Day   string `json:"day"`
+	Count int64  `json:"count"`
+	Bytes int64  `json:"bytes"`
+}
+
+// StorageStats is the aggregate dashboard payload: current size, object
+// counts, per-channel breakdown and a daily time series.
+type StorageStats struct {
+	TotalBytes   int64                `json:"total_bytes"`
+	TotalFiles   int64                `json:"total_files"`
+	TotalFolders int64                `json:"total_folders"`
+	TrashBytes   int64                `json:"trash_bytes"`
+	TrashFiles   int64                `json:"trash_files"`
+	ByKind       []StorageKindStats   `json:"by_kind"`
+	ByChannel    []StorageBucketStats `json:"by_channel"`
+	Daily        []DayPoint           `json:"daily"`
+}

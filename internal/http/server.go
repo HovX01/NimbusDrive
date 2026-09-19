@@ -113,6 +113,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/edit/projects/{projectID}/captions/export", s.exportCaptions)
 				r.Get("/edit/jobs/{jobID}", s.editExportStatus)
 				r.Get("/files", s.listFiles)
+				r.Get("/stats/storage", s.storageStats)
 				r.Get("/data/collections", s.listDataCollections)
 				r.Get("/data/{collection}", s.queryData)
 				r.Post("/data/{collection}", s.insertData)
@@ -146,16 +147,16 @@ func (s *Server) Router() http.Handler {
 				r.Delete("/shares/{shareID}", s.revokeShare)
 			})
 
-r.Group(func(r chi.Router) {
+			r.Group(func(r chi.Router) {
 				r.Use(s.sessionRequired)
-			r.Get("/settings/backup", s.getBackupSettings)
-			r.Put("/settings/backup", s.saveBackupSettings)
-			r.Post("/settings/backup/test", s.testBackupSettings)
-			r.Get("/settings/s3", s.getS3Settings)
-			r.Put("/settings/s3", s.saveS3Settings)
-			r.Get("/s3/buckets", s.listS3Buckets)
-			r.Post("/s3/buckets", s.createS3Bucket)
-			r.Get("/s3/buckets/{bucket}", s.listS3BucketObjects)
+				r.Get("/settings/backup", s.getBackupSettings)
+				r.Put("/settings/backup", s.saveBackupSettings)
+				r.Post("/settings/backup/test", s.testBackupSettings)
+				r.Get("/settings/s3", s.getS3Settings)
+				r.Put("/settings/s3", s.saveS3Settings)
+				r.Get("/s3/buckets", s.listS3Buckets)
+				r.Post("/s3/buckets", s.createS3Bucket)
+				r.Get("/s3/buckets/{bucket}", s.listS3BucketObjects)
 				r.Post("/backups", s.startBackup)
 				r.Get("/backups/{jobID}", s.backupStatus)
 				r.Get("/auth/me", s.me)
@@ -301,6 +302,15 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) storageStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.svc.StorageStats(r.Context(), intQuery(r, "days", 30))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 func (s *Server) storageSettings(w http.ResponseWriter, r *http.Request) {
