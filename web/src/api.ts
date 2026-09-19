@@ -68,6 +68,19 @@ export async function setupStatus() {
   );
 }
 
+export async function validateAccessKey(key: string) {
+  const res = await fetch(`${API}/api/v1/auth/resume`, {
+    method: "POST",
+    headers: key ? { "X-Nimbus-Access": key.trim() } : {},
+  });
+  // 401 means the key itself was rejected; anything else (e.g. no telegram
+  // session yet) means the key passed the gate.
+  if (res.status === 401) {
+    throw new Error("missing or invalid access key (X-Nimbus-Access)");
+  }
+  await res.json().catch(() => ({}));
+}
+
 export async function setupTelegram(apiId: number, apiHash: string) {
   return parse<{ status: string }>(
     await fetch(`${API}/api/v1/setup/telegram`, {

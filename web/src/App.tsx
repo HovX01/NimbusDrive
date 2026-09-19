@@ -30,6 +30,7 @@ import {
   type ShareInfo,
   type User,
   uploadFile,
+  validateAccessKey,
 } from "./api";
 import { AccessKeyScreen, BootScreen, LoginScreen, SetupScreen } from "./components/AuthScreens";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -222,8 +223,8 @@ export default function App() {
     setError("");
     setBusy(true);
     try {
+      await validateAccessKey(accessDraft);
       setAccessKey(accessDraft);
-      await setupStatus();
       setAccessReady(true);
       setAccessDraft("");
     } catch (e) {
@@ -235,6 +236,16 @@ export default function App() {
     }
   }
 
+  function bounceToAccessScreen(msg: string) {
+    clearAccessKey();
+    setAccessReady(false);
+    setError(msg);
+  }
+
+  function isAccessKeyError(msg: string) {
+    return msg.toLowerCase().includes("access key");
+  }
+
   async function onSaveApi() {
     setError("");
     setBusy(true);
@@ -244,7 +255,12 @@ export default function App() {
       await setupTelegram(id, apiHash.trim());
       setConfigured(true);
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      if (isAccessKeyError(msg)) {
+        bounceToAccessScreen(msg);
+        return;
+      }
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -257,7 +273,12 @@ export default function App() {
       const r = await sendCode(phone);
       setPhoneCodeHash(r.phone_code_hash);
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      if (isAccessKeyError(msg)) {
+        bounceToAccessScreen(msg);
+        return;
+      }
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -278,6 +299,10 @@ export default function App() {
       setUser(r.user);
     } catch (e) {
       const msg = (e as Error).message;
+      if (isAccessKeyError(msg)) {
+        bounceToAccessScreen(msg);
+        return;
+      }
       if (msg.includes("two-factor") || msg.includes("two_fa")) setNeed2fa(true);
       setError(msg);
     } finally {
