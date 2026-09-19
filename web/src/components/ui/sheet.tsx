@@ -15,7 +15,9 @@ const SheetOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      // Solid scrim instead of a backdrop-blur: blurring the full viewport
+      // every frame during the slide is very costly on mobile GPUs.
+      "fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -41,7 +43,9 @@ const SheetContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed z-50 flex w-[280px] flex-col gap-2 bg-card p-3 shadow-xl transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-300 data-[state=closed]:duration-200",
+        // Only animate transform; let the keyframes own timing so nothing
+        // fights them. will-change keeps the panel on its own layer.
+        "fixed z-50 flex w-[280px] flex-col gap-2 bg-card p-3 shadow-xl will-change-transform data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-300 data-[state=closed]:duration-200",
         sideClasses[side],
         className,
       )}

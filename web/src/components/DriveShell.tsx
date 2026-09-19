@@ -17,10 +17,8 @@ import {
   Link2,
   List as ListIcon,
   LogOut,
-  Menu,
   Move,
   PanelLeftClose,
-  PanelLeftOpen,
   PenLine,
   Plus,
   Scissors,
@@ -457,7 +455,14 @@ export function DriveShell(props: Props) {
       className="hidden -ml-1.5 text-muted-foreground hover:text-foreground lg:inline-flex"
       onClick={toggleSidebar}
     >
-      {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+      <span
+        className={cn(
+          "inline-flex transition-transform duration-300 ease-out motion-reduce:transition-none",
+          collapsed && "rotate-180",
+        )}
+      >
+        <PanelLeftClose />
+      </span>
     </Button>
   );
   const navGroups = [
@@ -494,29 +499,35 @@ export function DriveShell(props: Props) {
           )}>
             {group.label}
           </p>
-          {group.items.map((item) => (
-            <Tooltip key={item.id}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={item.run}
-                  aria-current={item.active ? "page" : undefined}
-                  aria-label={item.label}
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-                    collapsible && collapsed && "lg:gap-0 lg:justify-center lg:px-0 lg:py-2.5",
-                    item.active
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                  )}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  <span className={cn(collapsible && collapsed && "lg:hidden")}>{item.label}</span>
-                </button>
-              </TooltipTrigger>
-              {collapsible && collapsed && <TooltipContent side="right">{item.label}</TooltipContent>}
-            </Tooltip>
-          ))}
+          {group.items.map((item) => {
+            const btn = (
+              <button
+                type="button"
+                onClick={item.run}
+                aria-current={item.active ? "page" : undefined}
+                aria-label={item.label}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+                  collapsible && collapsed && "lg:gap-0 lg:justify-center lg:px-0 lg:py-2.5",
+                  item.active
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                )}
+              >
+                <item.icon className="h-4 w-4 shrink-0" />
+                <span className={cn(collapsible && collapsed && "lg:hidden")}>{item.label}</span>
+              </button>
+            );
+            // Tooltips only exist for the collapsible desktop rail; skip the
+            // extra Radix mounts entirely on mobile.
+            if (!collapsible) return <div key={item.id}>{btn}</div>;
+            return (
+              <Tooltip key={item.id}>
+                <TooltipTrigger asChild>{btn}</TooltipTrigger>
+                {collapsed && <TooltipContent side="right">{item.label}</TooltipContent>}
+              </Tooltip>
+            );
+          })}
         </nav>
       ))}
       <div className="mt-auto grid gap-2 border-t pt-3">
@@ -556,8 +567,22 @@ export function DriveShell(props: Props) {
         {/* Main */}
         <div className="flex min-w-0 flex-col px-4 pb-28 pt-4 sm:px-6 lg:pb-10">
           <div className="mb-3 flex items-center gap-2 lg:hidden">
-            <Button variant="outline" size="icon" aria-label="Open menu" onClick={() => setMenuOpen((o) => !o)}>
-              <Menu className="h-4 w-4" />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={menuOpen ? "Close sidebar" : "Open sidebar"}
+              title={menuOpen ? "Close sidebar" : "Open sidebar"}
+              className="-ml-1.5 text-muted-foreground hover:text-foreground"
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <span
+                className={cn(
+                  "inline-flex transition-transform duration-300 ease-out motion-reduce:transition-none",
+                  menuOpen && "rotate-180",
+                )}
+              >
+                <PanelLeftClose />
+              </span>
             </Button>
             <BrandMark />
           </div>
