@@ -81,7 +81,19 @@ func persist(dataDir string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(dataDir), append(b, '\n'), 0o600)
+	f, err := os.CreateTemp(dataDir, ".s3gw-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), configPath(dataDir))
 }
 
 func newKeypair() (accessKey, secretKey string, err error) {

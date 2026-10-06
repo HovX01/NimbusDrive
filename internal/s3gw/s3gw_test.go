@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	minio "github.com/minio/minio-go/v7"
 	miniocreds "github.com/minio/minio-go/v7/pkg/credentials"
@@ -98,7 +100,11 @@ func newTestServer(t *testing.T) (*app.Services, *httptest.Server, *sqlite.Store
 		DataDir:   dataDir,
 		ChunkSize: 8 << 20,
 	}
-	srv := New(svc, Config{Enabled: true, AccessKey: testAccessKey, SecretKey: testSecretKey, Region: "us-east-1"}, dataDir)
+	cfg := Config{Enabled: true, AccessKey: testAccessKey, SecretKey: testSecretKey, Region: "us-east-1"}
+	if err := persist(dataDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(svc, cfg, dataDir)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(func() {
 		ts.Close()
@@ -325,6 +331,80 @@ func TestGatewayUnsignedPayload(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestGatewayPresignedAndRotatedCredentials(t *testing.T) {
+	ctx := context.Background()
+	svc, ts, _ := newTestServer(t)
+	client := minioClient(t, ts)
+	if err := client.MakeBucket(ctx, "signedbucket", minio.MakeBucketOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	key := "folder/a+b:@$ ក.txt"
+	if _, err := client.PutObject(ctx, "signedbucket", key, strings.NewReader("signed body"), int64(len("signed body")), minio.PutObjectOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	uri, err := client.PresignedGetObject(ctx, "signedbucket", key, time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.Get(uri.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusOK || string(body) != "signed body" {
+		t.Fatalf("presigned GET: status %d, body %q, error %v", res.StatusCode, body, err)
+	}
+	putURI, err := client.PresignedPutObject(ctx, "signedbucket", "presigned.txt", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put, err := http.NewRequest(http.MethodPut, putURI.String(), strings.NewReader("presigned upload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.DefaultClient.Do(put)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("presigned PUT: status %d, body %q, error %v", res.StatusCode, body, err)
+	}
+	obj, err := client.GetObject(ctx, "signedbucket", "presigned.txt", minio.GetObjectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(obj)
+	obj.Close()
+	if err != nil || string(body) != "presigned upload" {
+		t.Fatalf("presigned upload persistence: %q, %v", body, err)
+	}
+	cfg, err := Load(svc.DataDir, true, "us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Rotate(svc.DataDir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListBuckets(ctx); err == nil {
+		t.Fatal("old credentials still accepted after rotation")
+	}
+	fresh, err := minio.New(strings.TrimPrefix(ts.URL, "http://"), &minio.Options{
+		Creds:        miniocreds.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Region:       cfg.Region,
+		BucketLookup: minio.BucketLookupPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fresh.ListBuckets(ctx); err != nil {
+		t.Fatalf("new credentials rejected without restart: %v", err)
+	}
+}
 
 // TestGatewayStreamsUploads verifies the gateway never buffers a whole file to
 // disk (the old 2GB ceiling came from that buffering) and still records the

@@ -22,13 +22,14 @@ const (
 type Server struct {
 	svc       *app.Services
 	cfg       Config
+	dataDir   string
 	multipart *multipartTracker
 }
 
 func New(svc *app.Services, cfg Config, dataDir string) *Server {
 	t := newMultipartTracker(dataDir)
 	t.cleanStale()
-	return &Server{svc: svc, cfg: cfg, multipart: t}
+	return &Server{svc: svc, cfg: cfg, dataDir: dataDir, multipart: t}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -38,7 +39,17 @@ func (s *Server) Handler() http.Handler {
 				writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, fmt.Sprintf("panic: %v", rec))
 			}
 		}()
-		if err := verifySigV4(r, s.cfg.AccessKey, s.cfg.SecretKey); err != nil {
+		cfg, err := Load(s.dataDir, s.cfg.Enabled, s.cfg.Region)
+		if err != nil {
+			writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, "cannot load S3 credentials")
+			return
+		}
+		defer func() {
+			if r.Body != nil {
+				r.Body.Close()
+			}
+		}()
+		if err := verifySigV4(r, cfg.AccessKey, cfg.SecretKey); err != nil {
 			switch {
 			case errors.Is(err, errInvalidKey):
 				writeS3Error(w, r, http.StatusForbidden, codeInvalidAccessKey, err.Error())
@@ -49,7 +60,9 @@ func (s *Server) Handler() http.Handler {
 			}
 			return
 		}
-		s.route(w, r)
+		current := *s
+		current.cfg = cfg
+		current.route(w, r)
 	})
 }
 
