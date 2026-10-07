@@ -130,3 +130,50 @@ func TestSigV4RejectsInvalidRequests(t *testing.T) {
 		t.Fatalf("duplicate auth fields accepted: %v", err)
 	}
 }
+
+func TestSigV4ProxyAcceptEncoding(t *testing.T) {
+	creds := aws.Credentials{AccessKeyID: "compat-access", SecretAccessKey: "compat-secret"}
+	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
+	for _, tc := range []struct {
+		name, signedEncoding, receivedEncoding, host, secret string
+		want                                                 error
+	}{
+		{"direct", "identity", "identity", "example.test", creds.SecretAccessKey, nil},
+		{"proxy gzip", "identity", "gzip", "example.test", creds.SecretAccessKey, nil},
+		{"proxy brotli", "identity", "br, gzip", "example.test", creds.SecretAccessKey, nil},
+		{"proxy removed encoding", "identity", "", "example.test", creds.SecretAccessKey, nil},
+		{"signed gzip", "gzip", "gzip", "example.test", creds.SecretAccessKey, nil},
+		{"different signed encoding", "gzip", "br, gzip", "example.test", creds.SecretAccessKey, errBadSignature},
+		{"wrong secret", "identity", "br, gzip", "example.test", "wrong-secret", errBadSignature},
+		{"tampered host", "identity", "br, gzip", "different.test", creds.SecretAccessKey, errBadSignature},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := http.NewRequest("PUT", "https://example.test/bucket/.arcane-connection-test", strings.NewReader("arcane-s3-connection-test"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Header.Set("Accept-Encoding", tc.signedEncoding)
+			r.Header.Set("Content-Type", "application/gzip")
+			r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+			if err := signer.SignHTTP(context.Background(), creds, r, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			r.Header.Set("Accept-Encoding", tc.receivedEncoding)
+			if tc.receivedEncoding == "" {
+				r.Header.Del("Accept-Encoding")
+			}
+			r.Host = tc.host
+			if err := verifySigV4(r, creds.AccessKeyID, tc.secret); err != tc.want {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+			if tc.want == nil && r.Header.Get("Accept-Encoding") != tc.signedEncoding {
+				t.Fatal("verified Accept-Encoding not restored")
+			}
+			body, err := io.ReadAll(r.Body)
+			r.Body.Close()
+			if err != nil || string(body) != "arcane-s3-connection-test" {
+				t.Fatalf("body changed: %q, %v", body, err)
+			}
+		})
+	}
+}

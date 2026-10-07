@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,7 +107,7 @@ func verifySigV4(r *http.Request, accessKey, secretKey string) error {
 		}
 		if name == "host" {
 			hasHost = true
-		} else if len(r.Header.Values(name)) == 0 && !(name == "content-length" && r.ContentLength > 0) {
+		} else if name != "accept-encoding" && len(r.Header.Values(name)) == 0 && !(name == "content-length" && r.ContentLength > 0) {
 			return errMalformedAuth
 		}
 	}
@@ -151,12 +152,24 @@ func verifySigV4(r *http.Request, accessKey, secretKey string) error {
 		paths = append(paths, escaped)
 	}
 	key := signingKey(secretKey, dateStamp, region, "s3")
-	for _, path := range paths {
-		for _, hash := range hashes {
-			canonical := r.Method + "\n" + path + "\n" + cr.String() + hash
-			stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(sha256Sum([]byte(canonical)))
-			if subtle.ConstantTimeCompare(hmacSHA256(key, []byte(stringToSign)), decodedSignature) == 1 {
-				return nil
+	canonicalHeaders := []string{cr.String()}
+	if slices.Contains(names, "accept-encoding") && canonicalHeaderValue(r, "accept-encoding") != "identity" {
+		// ponytail: recover signed identity only; preserve other encodings at the proxy.
+		// Restore it only after the full request signature verifies.
+		canonicalHeaders = append(canonicalHeaders, strings.Replace(cr.String(),
+			"accept-encoding:"+canonicalHeaderValue(r, "accept-encoding")+"\n", "accept-encoding:identity\n", 1))
+	}
+	for i, headers := range canonicalHeaders {
+		for _, path := range paths {
+			for _, hash := range hashes {
+				canonical := r.Method + "\n" + path + "\n" + headers + hash
+				stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(sha256Sum([]byte(canonical)))
+				if subtle.ConstantTimeCompare(hmacSHA256(key, []byte(stringToSign)), decodedSignature) == 1 {
+					if i > 0 {
+						r.Header.Set("Accept-Encoding", "identity")
+					}
+					return nil
+				}
 			}
 		}
 	}

@@ -335,7 +335,14 @@ func ptr(s string) *string { return &s }
 func TestGatewayArcaneHTTPSConnection(t *testing.T) {
 	ctx := context.Background()
 	_, ts, _ := newTestServer(t)
-	tls := httptest.NewTLSServer(ts.Config.Handler)
+	rewritten := false
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/arcanebucket/.arcane-connection-test-") && strings.Contains(r.Header.Get("Authorization"), "accept-encoding;") {
+			r.Header.Set("Accept-Encoding", "br, gzip")
+			rewritten = true
+		}
+		ts.Config.Handler.ServeHTTP(w, r)
+	}))
 	defer tls.Close()
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion("us-east-1"),
@@ -360,6 +367,9 @@ func TestGatewayArcaneHTTPSConnection(t *testing.T) {
 		ContentLength: &size, ContentType: ptr("application/gzip"),
 	}); err != nil {
 		t.Fatalf("Arcane-shaped HTTPS PUT: %v", err)
+	}
+	if !rewritten {
+		t.Fatal("test did not rewrite signed Accept-Encoding")
 	}
 	obj, err := client.GetObject(ctx, &awss3.GetObjectInput{Bucket: ptr("arcanebucket"), Key: ptr(key)})
 	if err != nil {
