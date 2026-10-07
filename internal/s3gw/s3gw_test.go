@@ -332,6 +332,49 @@ func TestGatewayUnsignedPayload(t *testing.T) {
 
 func ptr(s string) *string { return &s }
 
+func TestGatewayArcaneHTTPSConnection(t *testing.T) {
+	ctx := context.Background()
+	_, ts, _ := newTestServer(t)
+	tls := httptest.NewTLSServer(ts.Config.Handler)
+	defer tls.Close()
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithHTTPClient(tls.Client()),
+		awsconfig.WithCredentialsProvider(awscreds.NewStaticCredentialsProvider(testAccessKey, testSecretKey, "")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := awss3.NewFromConfig(cfg, func(o *awss3.Options) {
+		o.BaseEndpoint = &tls.URL
+		o.UsePathStyle = true
+	})
+	if _, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: ptr("arcanebucket")}); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("arcane-s3-connection-test")
+	key := ".arcane-connection-test-12345678-1234-1234-1234-123456789012"
+	size := int64(len(payload))
+	if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: ptr("arcanebucket"), Key: ptr(key), Body: bytes.NewReader(payload),
+		ContentLength: &size, ContentType: ptr("application/gzip"),
+	}); err != nil {
+		t.Fatalf("Arcane-shaped HTTPS PUT: %v", err)
+	}
+	obj, err := client.GetObject(ctx, &awss3.GetObjectInput{Bucket: ptr("arcanebucket"), Key: ptr(key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(obj.Body)
+	obj.Body.Close()
+	if err != nil || !bytes.Equal(body, payload) {
+		t.Fatalf("download: %q, %v", body, err)
+	}
+	if _, err := client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: ptr("arcanebucket"), Key: ptr(key)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGatewayPresignedAndRotatedCredentials(t *testing.T) {
 	ctx := context.Background()
 	svc, ts, _ := newTestServer(t)
