@@ -75,6 +75,16 @@ Full reference: **[docs/API.md](docs/API.md)** · Browser: open **[docs/index.ht
 
 Use `X-Nimbus-Key` (see `data/api.key`) for programmatic access. See [docs/API.md](docs/API.md) for examples.
 
+### S3 gateway
+
+Enable `NIMBUS_S3_ENABLED=true` and point a path-style S3 client at port `9091` (or its HTTPS reverse proxy). Credentials appear in **Settings > S3 Access**. Buckets map to top-level drive folders; keys map to nested paths.
+
+Supports bucket create/list/head/delete, object put/get/head/delete/copy, bulk delete, byte ranges, ListObjects v1/v2 pagination, empty objects and trailing-slash directory markers, multipart upload/list/complete/abort, and signed/presigned SigV4 requests. Overwrites publish atomically; failed uploads preserve the previous object. Deleting a marker leaves its children intact.
+
+This is a Telegram-backed S3 gateway. AWS management APIs (ACLs, policies, versioning, lifecycle, tagging, and similar subresources) return `NotImplemented`. Keys follow drive name/path rules: 255 characters per segment, no empty intermediate segments or backslashes, and files cannot share a name with a folder. Unfinished multipart uploads expire on restart. Deleted/replaced objects enter drive trash.
+
+Run `go test ./internal/s3gw ./internal/app ./internal/store/sqlite` for gateway/storage checks. Set `NIMBUS_TEST_RUSTIC` to a Rustic executable to include local backup, S3 replication, byte-for-byte restore, integrity checks, and pruning.
+
 ### Media fetch engine
 
 Nimbus keeps its existing native extractors and configured API fallbacks. When those cannot resolve a link, it can fall back to local `yt-dlp` for broad site support and high-quality video/audio merging via `ffmpeg`. The Docker image includes both `yt-dlp` and `ffmpeg`; bare-metal installs can set `NIMBUS_YTDLP_PATH`.

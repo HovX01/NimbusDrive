@@ -532,14 +532,14 @@ func TestBucketManagement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find bucket folder: %v", err)
 	}
-	if _, err := svc.UploadNoDedup(ctx, folder.ID, "app.log", "text/plain", strings.NewReader("line one")); err != nil {
+	if _, err := svc.Upload(ctx, folder.ID, "app.log", "text/plain", strings.NewReader("line one"), 8); err != nil {
 		t.Fatalf("upload object: %v", err)
 	}
 	sub, err := svc.Mkdir(ctx, folder.ID, "archive")
 	if err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if _, err := svc.UploadNoDedup(ctx, sub.ID, "old.log", "text/plain", strings.NewReader("old")); err != nil {
+	if _, err := svc.Upload(ctx, sub.ID, "old.log", "text/plain", strings.NewReader("old"), 3); err != nil {
 		t.Fatalf("upload nested object: %v", err)
 	}
 

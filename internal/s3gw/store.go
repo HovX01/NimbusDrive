@@ -25,7 +25,6 @@ func splitKey(key string) (string, string) {
 }
 
 func splitSegments(path string) []string {
-	path = strings.Trim(path, "/")
 	if path == "" {
 		return nil
 	}
@@ -114,6 +113,9 @@ func (s *Server) ensureFolderPath(ctx context.Context, startID, path string) (do
 
 // lookupObject resolves a full object key to its node (file or folder).
 func (s *Server) lookupObject(ctx context.Context, bucket, key string) (domain.Node, error) {
+	if err := validateObjectKey(key); err != nil {
+		return domain.Node{}, err
+	}
 	bNode, err := bucketNodeOf(ctx, s.svc, bucket)
 	if err != nil {
 		return domain.Node{}, err
@@ -122,9 +124,6 @@ func (s *Server) lookupObject(ctx context.Context, bucket, key string) (domain.N
 	folder, err := s.resolveFolder(ctx, bNode.ID, folderPath)
 	if err != nil {
 		return domain.Node{}, err
-	}
-	if name == "" {
-		return folder, nil
 	}
 	return s.svc.Nodes.FindChildByName(ctx, folder.ID, name)
 }

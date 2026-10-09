@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -34,34 +32,6 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
-func sortObjects(o []s3Object) {
-	sort.Slice(o, func(i, j int) bool { return o[i].Key < o[j].Key })
-}
-
-func sortCommon(c []s3CommonPrefix) {
-	sort.Slice(c, func(i, j int) bool { return c[i].Prefix < c[j].Prefix })
-}
-
-func filterAfter(o []s3Object, marker string) []s3Object {
-	out := o[:0]
-	for _, x := range o {
-		if x.Key > marker {
-			out = append(out, x)
-		}
-	}
-	return out
-}
-
-func filterCommonAfter(c []s3CommonPrefix, marker string) []s3CommonPrefix {
-	out := c[:0]
-	for _, x := range c {
-		if x.Prefix > marker {
-			out = append(out, x)
-		}
-	}
-	return out
-}
-
 func decodeXMLBody(r *http.Request, v any) error {
 	defer func() { _, _ = io.Copy(io.Discard, r.Body) }()
 	return xml.NewDecoder(r.Body).Decode(v)
@@ -80,7 +50,7 @@ func errorStatus(err error) int {
 	switch {
 	case errors.Is(err, errUnknownUpload):
 		return http.StatusNotFound
-	case errors.Is(err, errInvalidPart), errors.Is(err, errMalformedXML), errors.Is(err, domain.ErrValidation):
+	case errors.Is(err, errInvalidPart), errors.Is(err, errInvalidPartOrder), errors.Is(err, errEntityTooSmall), errors.Is(err, errMalformedXML), errors.Is(err, domain.ErrValidation):
 		return http.StatusBadRequest
 	case errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound
@@ -96,6 +66,10 @@ func errorCode(err error) string {
 		return codeNoSuchUpload
 	case errors.Is(err, errInvalidPart):
 		return codeInvalidPart
+	case errors.Is(err, errInvalidPartOrder):
+		return "InvalidPartOrder"
+	case errors.Is(err, errEntityTooSmall):
+		return "EntityTooSmall"
 	case errors.Is(err, errMalformedXML):
 		return codeMalformedXML
 	case errors.Is(err, domain.ErrValidation):
@@ -111,41 +85,14 @@ func errorCode(err error) string {
 	return codeInternalError
 }
 
-func downloadContentType(mimeType, name string) string {
-	if mimeType != "" && mimeType != "application/octet-stream" {
-		return mimeType
-	}
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".mp4", ".m4v":
-		return "video/mp4"
-	case ".webm":
-		return "video/webm"
-	case ".mov":
-		return "video/quicktime"
-	case ".mp3":
-		return "audio/mpeg"
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".pdf":
-		return "application/pdf"
-	}
-	if mimeType != "" {
-		return mimeType
-	}
-	return "application/octet-stream"
-}
-
 // parseObjectRange handles a single "bytes=start-end" request; ok=false means
 // the whole object was requested.
 func parseObjectRange(header string, size int64) (start, end int64, ok bool, err error) {
-	if header == "" || size <= 0 {
+	if header == "" {
 		return 0, 0, false, nil
+	}
+	if size <= 0 {
+		return 0, 0, false, errors.New("empty object has no byte ranges")
 	}
 	if !strings.HasPrefix(header, "bytes=") {
 		return 0, 0, false, errors.New("range must use bytes=")

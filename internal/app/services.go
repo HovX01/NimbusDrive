@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -228,10 +229,8 @@ func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeTy
 	return s.upload(ctx, parentID, filename, mimeType, r, true)
 }
 
-// UploadNoDedup stores bytes under parentID without content-hash dedup. The S3
-// gateway uses this: its keys must exist even when identical bytes are already
-// stored under another key.
-func (s *Services) UploadNoDedup(ctx context.Context, parentID, filename, mimeType string, r io.Reader) (domain.Node, error) {
+// StageObject streams without dedup; the S3 gateway publishes it with Nodes.Replace.
+func (s *Services) StageObject(ctx context.Context, parentID, filename, mimeType string, r io.Reader) (domain.Node, error) {
 	return s.upload(ctx, parentID, filename, mimeType, r, false)
 }
 
@@ -251,7 +250,7 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 	if nameErr != nil {
 		return domain.Node{}, nameErr
 	}
-	if mimeType == "" || mimeType == "application/octet-stream" {
+	if mimeType == "" || (dedup && mimeType == "application/octet-stream") {
 		if guessed := mime.TypeByExtension(filepath.Ext(filename)); guessed != "" {
 			mimeType = guessed
 		} else if mimeType == "" {
@@ -261,9 +260,22 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 
 	var reader io.Reader = r
 	contentHash := ""
+	if !dedup {
+		stream := bufio.NewReader(r)
+		if _, err := stream.Peek(1); err != nil {
+			if err != io.EOF {
+				return domain.Node{}, err
+			}
+			return s.Nodes.Create(ctx, domain.Node{
+				ParentID: &parentID, Name: filename, Type: domain.NodeFile,
+				MimeType: mimeType, Status: domain.StatusPending,
+			})
+		}
+		reader = stream
+	}
 	if dedup {
 		// Dedup needs the content hash before spending Telegram parts, so buffer
-		// once to disk. The gateway streams instead (UploadNoDedup) and has no cap.
+		// once to disk. The gateway streams instead (StageObject) and has no cap.
 		tmpDir := filepath.Join(s.DataDir, "upload-tmp")
 		if strings.TrimSpace(s.DataDir) == "" {
 			tmpDir = filepath.Join(os.TempDir(), "nimbus-upload")
@@ -353,16 +365,18 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 		_ = s.rollbackUpload(ctx, node.ID, finalParts)
 		return domain.Node{}, err
 	}
-	if err := s.Nodes.UpdateStatus(ctx, node.ID, domain.StatusReady); err != nil {
-		return domain.Node{}, err
+	if dedup {
+		if err := s.Nodes.UpdateStatus(ctx, node.ID, domain.StatusReady); err != nil {
+			return domain.Node{}, err
+		}
+		node.Status = domain.StatusReady
 	}
 	_ = s.Nodes.SetContentHash(ctx, node.ID, contentHash)
 	node.Size = finalTotal
-	node.Status = domain.StatusReady
 
 	// Build image/video thumbs in background so grid cards stay fast.
-	if strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/") ||
-		isImageFilename(filename) || isVideoFilename(filename) {
+	if node.Status == domain.StatusReady && (strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/") ||
+		isImageFilename(filename) || isVideoFilename(filename)) {
 		go func(id string) {
 			_ = s.EnsureThumb(context.Background(), id)
 		}(node.ID)
@@ -405,6 +419,7 @@ loop:
 
 			select {
 			case <-gctx.Done():
+				_ = g.Wait()
 				_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
 				return nil, 0, "", gctx.Err()
 			case sem <- struct{}{}:
@@ -433,6 +448,7 @@ loop:
 			break loop
 		}
 		if readErr != nil {
+			_ = g.Wait()
 			_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
 			return nil, 0, "", readErr
 		}
@@ -506,6 +522,9 @@ func (s *Services) DownloadRange(ctx context.Context, fileID string, w io.Writer
 	}
 	if node.Type != domain.NodeFile || node.Status != domain.StatusReady {
 		return domain.Node{}, domain.ErrNotFound
+	}
+	if node.Size == 0 && start == 0 && endInclusive < 0 {
+		return node, nil
 	}
 	parts, err := s.Parts.ListByFile(ctx, fileID)
 	if err != nil {

@@ -52,11 +52,12 @@ type listAllMyBucketsResult struct {
 }
 
 type s3Object struct {
-	Key          string `xml:"Key"`
-	LastModified string `xml:"LastModified"`
-	ETag         string `xml:"ETag"`
-	Size         int64  `xml:"Size"`
-	StorageClass string `xml:"StorageClass"`
+	Key          string   `xml:"Key"`
+	LastModified string   `xml:"LastModified"`
+	ETag         string   `xml:"ETag"`
+	Size         int64    `xml:"Size"`
+	StorageClass string   `xml:"StorageClass"`
+	Owner        *s3Owner `xml:"Owner,omitempty"`
 }
 
 type s3CommonPrefix struct {
@@ -72,9 +73,10 @@ type listBucketResult struct {
 	NextMarker            string           `xml:"NextMarker,omitempty"`
 	MaxKeys               int              `xml:"MaxKeys"`
 	IsTruncated           bool             `xml:"IsTruncated"`
-	KeyCount              int              `xml:"KeyCount,omitempty"`
+	KeyCount              int              `xml:"KeyCount"`
 	EncodingType          string           `xml:"EncodingType,omitempty"`
 	ContinuationToken     string           `xml:"ContinuationToken,omitempty"`
+	StartAfter            string           `xml:"StartAfter,omitempty"`
 	NextContinuationToken string           `xml:"NextContinuationToken,omitempty"`
 	Contents              []s3Object       `xml:"Contents"`
 	CommonPrefixes        []s3CommonPrefix `xml:"CommonPrefixes"`
@@ -106,14 +108,72 @@ type completeMultipartResult struct {
 }
 
 type listMultipartUploadsResult struct {
-	XMLName            xml.Name `xml:"ListMultipartUploadsResult"`
-	Bucket             string   `xml:"Bucket"`
-	KeyMarker          string   `xml:"KeyMarker"`
-	UploadIDMarker     string   `xml:"UploadIdMarker"`
-	NextKeyMarker      string   `xml:"NextKeyMarker"`
-	NextUploadIDMarker string   `xml:"NextUploadIdMarker"`
-	MaxUploads         int      `xml:"MaxUploads"`
-	IsTruncated        bool     `xml:"IsTruncated"`
+	XMLName            xml.Name   `xml:"ListMultipartUploadsResult"`
+	Bucket             string     `xml:"Bucket"`
+	KeyMarker          string     `xml:"KeyMarker"`
+	UploadIDMarker     string     `xml:"UploadIdMarker"`
+	NextKeyMarker      string     `xml:"NextKeyMarker"`
+	NextUploadIDMarker string     `xml:"NextUploadIdMarker"`
+	MaxUploads         int        `xml:"MaxUploads"`
+	IsTruncated        bool       `xml:"IsTruncated"`
+	Prefix             string     `xml:"Prefix,omitempty"`
+	Uploads            []s3Upload `xml:"Upload"`
+}
+
+type s3Upload struct {
+	Key          string `xml:"Key"`
+	UploadID     string `xml:"UploadId"`
+	Initiated    string `xml:"Initiated"`
+	StorageClass string `xml:"StorageClass"`
+}
+
+type s3Part struct {
+	PartNumber   int    `xml:"PartNumber"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         int64  `xml:"Size"`
+}
+
+type listPartsResult struct {
+	XMLName              xml.Name `xml:"ListPartsResult"`
+	Bucket               string   `xml:"Bucket"`
+	Key                  string   `xml:"Key"`
+	UploadID             string   `xml:"UploadId"`
+	StorageClass         string   `xml:"StorageClass"`
+	PartNumberMarker     int      `xml:"PartNumberMarker"`
+	NextPartNumberMarker int      `xml:"NextPartNumberMarker"`
+	MaxParts             int      `xml:"MaxParts"`
+	IsTruncated          bool     `xml:"IsTruncated"`
+	Parts                []s3Part `xml:"Part"`
+}
+
+type copyObjectResult struct {
+	XMLName      xml.Name `xml:"CopyObjectResult"`
+	LastModified string   `xml:"LastModified"`
+	ETag         string   `xml:"ETag"`
+}
+
+type deletedObject struct {
+	Key       string `xml:"Key"`
+	VersionID string `xml:"VersionId,omitempty"`
+}
+
+type deleteObjectsRequest struct {
+	XMLName xml.Name        `xml:"Delete"`
+	Objects []deletedObject `xml:"Object"`
+	Quiet   bool            `xml:"Quiet"`
+}
+
+type deleteObjectError struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
+type deleteObjectsResult struct {
+	XMLName xml.Name            `xml:"DeleteResult"`
+	Deleted []deletedObject     `xml:"Deleted"`
+	Errors  []deleteObjectError `xml:"Error"`
 }
 
 type locationConstraintResult struct {

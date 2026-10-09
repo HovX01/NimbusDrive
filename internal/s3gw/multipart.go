@@ -8,29 +8,34 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 var (
-	errUnknownUpload = errors.New("unknown upload id")
-	errInvalidPart   = errors.New("invalid part")
-	errMalformedXML  = errors.New("malformed xml")
+	errUnknownUpload    = errors.New("unknown upload id")
+	errInvalidPart      = errors.New("invalid part")
+	errMalformedXML     = errors.New("malformed xml")
+	errInvalidPartOrder = errors.New("invalid part order")
+	errEntityTooSmall   = errors.New("part too small")
 )
 
 // partBuffer is one uploaded part staged on local disk until CompleteMultipartUpload.
 type partBuffer struct {
-	Path string
-	Size int64
-	MD5  string
+	Path     string
+	Size     int64
+	MD5      string
+	Modified time.Time
 }
 
 type multipartUpload struct {
 	Bucket      string
 	Key         string
 	ContentType string
+	Initiated   time.Time
 	Dir         string
 	mu          sync.Mutex
 	parts       map[int]*partBuffer
@@ -52,7 +57,7 @@ func (t *multipartTracker) stagingDir() string {
 	return filepath.Join(t.dataDir, "s3-multipart")
 }
 
-// cleanStale removes part staging dirs left over from a previous process.
+// shortcut: unfinished uploads expire on restart; persist their metadata when cross-restart resume is required.
 func (t *multipartTracker) cleanStale() {
 	entries, err := os.ReadDir(t.stagingDir())
 	if err != nil {
@@ -75,12 +80,24 @@ func (t *multipartTracker) get(uploadID string) (*multipartUpload, error) {
 	return up, nil
 }
 
+func (t *multipartTracker) getForObject(uploadID, bucket, key string) (*multipartUpload, error) {
+	up, err := t.get(uploadID)
+	if err != nil {
+		return nil, err
+	}
+	if up.Bucket != bucket || up.Key != key {
+		return nil, errUnknownUpload
+	}
+	return up, nil
+}
+
 func (t *multipartTracker) create(bucket, key, contentType string) (string, error) {
 	uploadID := uuid.NewString()
 	up := &multipartUpload{
 		Bucket:      bucket,
 		Key:         key,
 		ContentType: contentType,
+		Initiated:   time.Now().UTC(),
 		Dir:         filepath.Join(t.stagingDir(), uploadID),
 		parts:       map[int]*partBuffer{},
 	}
@@ -102,12 +119,12 @@ func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (st
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(up.Dir, fmt.Sprintf("part-%05d", partNo))
-	f, err := os.Create(path)
+	f, err := os.CreateTemp(up.Dir, "part-*")
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	defer os.Remove(f.Name())
 	h := md5.New()
 	n, err := io.Copy(io.MultiWriter(f, h), r)
 	if err != nil {
@@ -116,10 +133,15 @@ func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (st
 	if err := f.Close(); err != nil {
 		return "", err
 	}
+	md5Hex := hex.EncodeToString(h.Sum(nil))
 	up.mu.Lock()
-	up.parts[partNo] = &partBuffer{Path: path, Size: n, MD5: hex.EncodeToString(h.Sum(nil))}
-	up.mu.Unlock()
-	return up.parts[partNo].MD5, nil
+	defer up.mu.Unlock()
+	path := filepath.Join(up.Dir, fmt.Sprintf("part-%05d", partNo))
+	if err := os.Rename(f.Name(), path); err != nil {
+		return "", err
+	}
+	up.parts[partNo] = &partBuffer{Path: path, Size: n, MD5: md5Hex, Modified: time.Now().UTC()}
+	return md5Hex, nil
 }
 
 // assemble validates the requested parts and returns a reader over their
@@ -132,23 +154,27 @@ func (t *multipartTracker) assemble(uploadID string, requested []completePartReq
 	if len(requested) == 0 {
 		return nil, nil, fmt.Errorf("%w: no parts in complete request", errMalformedXML)
 	}
+	up.mu.Lock()
+	defer up.mu.Unlock()
 	ordered := make([]int, 0, len(requested))
-	seen := map[int]bool{}
-	for _, p := range requested {
+	previous := 0
+	for i, p := range requested {
+		if p.PartNumber <= previous {
+			return nil, nil, errInvalidPartOrder
+		}
+		previous = p.PartNumber
 		buf, ok := up.parts[p.PartNumber]
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: part %d not uploaded", errInvalidPart, p.PartNumber)
 		}
-		if p.ETag != "" && p.ETag != buf.MD5 {
+		if strings.Trim(p.ETag, `"`) != buf.MD5 {
 			return nil, nil, fmt.Errorf("%w: part %d etag mismatch", errInvalidPart, p.PartNumber)
 		}
-		if seen[p.PartNumber] {
-			return nil, nil, fmt.Errorf("%w: duplicate part %d", errInvalidPart, p.PartNumber)
+		if i < len(requested)-1 && buf.Size < 5<<20 {
+			return nil, nil, errEntityTooSmall
 		}
-		seen[p.PartNumber] = true
 		ordered = append(ordered, p.PartNumber)
 	}
-	sort.Ints(ordered)
 	readers := make([]io.Reader, 0, len(ordered))
 	files := make([]*os.File, 0, len(ordered))
 	for _, no := range ordered {
@@ -166,10 +192,6 @@ func (t *multipartTracker) assemble(uploadID string, requested []completePartReq
 		for _, f := range files {
 			_ = f.Close()
 		}
-		_ = os.RemoveAll(up.Dir)
-		t.mu.Lock()
-		delete(t.uploads, uploadID)
-		t.mu.Unlock()
 	}
 	return io.MultiReader(readers...), cleanup, nil
 }

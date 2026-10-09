@@ -15,6 +15,7 @@ type NodeRepository interface {
 	UpdateStatus(ctx context.Context, id string, status NodeStatus) error
 	UpdateSize(ctx context.Context, id string, size int64) error
 	Rename(ctx context.Context, id, name string) error
+	Replace(ctx context.Context, id, name string) error
 	Move(ctx context.Context, id, parentID string) error
 	SoftDelete(ctx context.Context, id string) error
 	GetDeleted(ctx context.Context, id string) (Node, error)

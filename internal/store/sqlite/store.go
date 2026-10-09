@@ -430,6 +430,47 @@ UPDATE nodes SET size = ?, updated_at = ? WHERE id = ? AND status != 'deleted'`,
 	return nil
 }
 
+// Replace publishes a staged file and trashes the old file in one transaction.
+func (s *Store) Replace(ctx context.Context, id, name string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var parentID string
+	if err := tx.QueryRowContext(ctx, `SELECT parent_id FROM nodes WHERE id = ? AND type = 'file' AND status = 'pending'`, id).Scan(&parentID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return err
+	}
+	var previousID, previousType, previousStatus string
+	err = tx.QueryRowContext(ctx, `SELECT id, type, status FROM nodes WHERE parent_id = ? AND name = ? AND id != ? AND status != 'deleted'`, parentID, name, id).Scan(&previousID, &previousType, &previousStatus)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if previousType == string(domain.NodeFolder) || previousStatus == string(domain.StatusPending) {
+		return domain.ErrConflict
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if previousID != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?`, now, now, previousID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET name = ?, status = 'ready', updated_at = ? WHERE id = ?`, name, now, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if previousID != "" {
+		_ = s.removeFTS(ctx, previousID)
+	}
+	_ = s.upsertFTS(ctx, id)
+	return nil
+}
+
 func (s *Store) Rename(ctx context.Context, id, name string) error {
 	res, err := s.db.ExecContext(ctx, `
 UPDATE nodes SET name = ?, updated_at = ? WHERE id = ? AND status != 'deleted'`,

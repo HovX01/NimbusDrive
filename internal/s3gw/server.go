@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/vrc/nimbus/internal/app"
 	"github.com/vrc/nimbus/internal/domain"
 )
@@ -24,12 +29,13 @@ type Server struct {
 	cfg       Config
 	dataDir   string
 	multipart *multipartTracker
+	namespace *sync.RWMutex
 }
 
 func New(svc *app.Services, cfg Config, dataDir string) *Server {
 	t := newMultipartTracker(dataDir)
 	t.cleanStale()
-	return &Server{svc: svc, cfg: cfg, dataDir: dataDir, multipart: t}
+	return &Server{svc: svc, cfg: cfg, dataDir: dataDir, multipart: t, namespace: &sync.RWMutex{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -70,7 +76,7 @@ func (s *Server) Handler() http.Handler {
 // bucket, "/bucket/key/with/slashes" is an object. r.URL.Path is already
 // percent-decoded by net/http, so keys arrive decoded.
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
-	p := strings.Trim(r.URL.Path, "/")
+	p := strings.TrimPrefix(r.URL.Path, "/")
 	if p == "" {
 		if r.Method == http.MethodGet {
 			s.listBuckets(w, r)
@@ -80,6 +86,40 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket, rest := splitFirst(p)
+	allowed := ""
+	if rest == "" {
+		switch r.Method {
+		case http.MethodGet:
+			allowed = "list-type prefix delimiter max-keys marker continuation-token start-after encoding-type fetch-owner location uploads key-marker upload-id-marker max-uploads"
+		case http.MethodPost:
+			allowed = "delete"
+		}
+	} else {
+		switch r.Method {
+		case http.MethodGet:
+			allowed = "uploadId part-number-marker max-parts response-content-type response-content-disposition response-content-language response-content-encoding response-cache-control response-expires"
+		case http.MethodPut:
+			allowed = "uploadId partNumber"
+		case http.MethodPost:
+			allowed = "uploads uploadId"
+		case http.MethodDelete:
+			allowed = "uploadId"
+		}
+	}
+	for query := range r.URL.Query() {
+		if query != "x-id" && !strings.HasPrefix(query, "X-Amz-") && !slices.Contains(strings.Fields(allowed), query) {
+			writeS3Error(w, r, http.StatusNotImplemented, "NotImplemented", "S3 query operation not supported: "+query)
+			return
+		}
+	}
+	// Bucket removal must exclude writes between its emptiness check and deletion.
+	if rest == "" && r.Method == http.MethodDelete {
+		s.namespace.Lock()
+		defer s.namespace.Unlock()
+	} else {
+		s.namespace.RLock()
+		defer s.namespace.RUnlock()
+	}
 	if rest == "" {
 		switch r.Method {
 		case http.MethodGet:
@@ -88,9 +128,21 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 			s.headBucket(w, r, bucket)
 		case http.MethodPut:
 			s.createBucket(w, r, bucket)
+		case http.MethodPost:
+			if _, ok := r.URL.Query()["delete"]; ok {
+				s.deleteObjects(w, r, bucket)
+				return
+			}
+			writeS3Error(w, r, http.StatusBadRequest, codeInvalidRequest, "unsupported POST")
+		case http.MethodDelete:
+			s.deleteBucket(w, r, bucket)
 		default:
 			writeS3Error(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		}
+		return
+	}
+	if _, err := bucketNodeOf(r.Context(), s.svc, bucket); err != nil {
+		writeS3Error(w, r, errorStatus(err), codeNoSuchBucket, err.Error())
 		return
 	}
 	switch r.Method {
@@ -166,15 +218,6 @@ func (s *Server) createBucket(w http.ResponseWriter, r *http.Request, bucket str
 func (s *Server) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
 	q := r.URL.Query()
-	if _, ok := q["uploads"]; ok {
-		// Abandoned-upload sweep; we do not track uploads across restarts.
-		writeXML(w, http.StatusOK, listMultipartUploadsResult{Bucket: bucket})
-		return
-	}
-	if _, ok := q["location"]; ok {
-		writeXML(w, http.StatusOK, locationConstraintResult{Region: s.cfg.Region})
-		return
-	}
 	bNode, err := bucketNodeOf(ctx, s.svc, bucket)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -184,11 +227,22 @@ func (s *Server) listObjects(w http.ResponseWriter, r *http.Request, bucket stri
 		writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, err.Error())
 		return
 	}
+	if _, ok := q["uploads"]; ok {
+		s.listMultipartUploads(w, r, bucket)
+		return
+	}
+	if _, ok := q["location"]; ok {
+		writeXML(w, http.StatusOK, locationConstraintResult{Region: s.cfg.Region})
+		return
+	}
 
 	prefix := q.Get("prefix")
 	delimiter := q.Get("delimiter")
-	maxKeys := clampInt(intQueryDefault(q.Get("max-keys"), maxKeysCap), 1, maxKeysCap)
+	maxKeys := clampInt(intQueryDefault(q.Get("max-keys"), maxKeysCap), 0, maxKeysCap)
 	marker := q.Get("marker")
+	if q.Get("list-type") == "2" {
+		marker = q.Get("start-after")
+	}
 	if token := q.Get("continuation-token"); token != "" {
 		marker = token
 	}
@@ -202,17 +256,23 @@ func (s *Server) listObjects(w http.ResponseWriter, r *http.Request, bucket stri
 
 	result := listBucketResult{
 		Name:         bucket,
-		Prefix:       prefix,
-		Delimiter:    delimiter,
+		Prefix:       enc(prefix),
+		Delimiter:    enc(delimiter),
 		MaxKeys:      maxKeys,
 		EncodingType: q.Get("encoding-type"),
 		Contents:     []s3Object{},
+	}
+	if q.Get("list-type") == "2" {
+		result.ContinuationToken = q.Get("continuation-token")
+		result.StartAfter = enc(q.Get("start-after"))
+	} else {
+		result.Marker = enc(q.Get("marker"))
 	}
 
 	// Resolve the folder the prefix points at. folderKey is the deepest folder
 	// implied by the prefix; literal is the remaining name filter (used only
 	// when the prefix does not end with the delimiter).
-	folderKey, literal := splitPrefix(prefix)
+	folderKey, _ := splitPrefix(prefix)
 	listNode, err := s.resolveFolder(ctx, bNode.ID, folderKey)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -223,82 +283,71 @@ func (s *Server) listObjects(w http.ResponseWriter, r *http.Request, bucket stri
 		return
 	}
 
-	var objects []s3Object
-	var common []s3CommonPrefix
-	if delimiter != "" {
-		children, err := s.svc.List(ctx, listNode.ID)
-		if err != nil {
-			writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, err.Error())
+	type entry struct {
+		key    string
+		node   domain.Node
+		common bool
+	}
+	var entries []entry
+	prefixes := map[string]bool{}
+	if err := walkTree(ctx, s.svc, listNode.ID, folderKey, func(key string, n domain.Node) {
+		if !strings.HasPrefix(key, prefix) {
 			return
 		}
-		for _, c := range children {
-			if literal != "" && !strings.HasPrefix(c.Name, literal) {
-				continue
+		isCommon := false
+		if delimiter != "" {
+			if i := strings.Index(strings.TrimPrefix(key, prefix), delimiter); i >= 0 {
+				key = key[:len(prefix)+i+len(delimiter)]
+				if prefixes[key] {
+					return
+				}
+				prefixes[key] = true
+				isCommon = true
 			}
-			if c.Type == domain.NodeFolder {
-				common = append(common, s3CommonPrefix{Prefix: enc(joinKey(folderKey, c.Name) + "/")})
-				continue
-			}
-			if c.Status != domain.StatusReady {
-				continue
-			}
-			objects = append(objects, s3Object{
-				Key:          enc(joinKey(folderKey, c.Name)),
-				LastModified: iso8601(c.UpdatedAt),
-				ETag:         etag(c),
-				Size:         c.Size,
-				StorageClass: "STANDARD",
-			})
 		}
-	} else {
-		if err := walkTree(ctx, s.svc, listNode.ID, folderKey, func(key string, n domain.Node) {
-			if !strings.HasPrefix(key, prefix) {
-				return
+		if key > marker {
+			entries = append(entries, entry{key: key, node: n, common: isCommon})
+		}
+	}); err != nil {
+		writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, err.Error())
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+	if maxKeys > 0 && len(entries) > maxKeys {
+		result.IsTruncated = true
+		entries = entries[:maxKeys]
+		lastKey := entries[len(entries)-1].key
+		if q.Get("list-type") == "2" {
+			result.NextContinuationToken = lastKey
+		} else {
+			result.NextMarker = enc(lastKey)
+		}
+	} else if maxKeys == 0 {
+		entries = nil
+	}
+	for _, e := range entries {
+		if e.common {
+			result.CommonPrefixes = append(result.CommonPrefixes, s3CommonPrefix{Prefix: enc(e.key)})
+		} else {
+			object := s3Object{
+				Key: enc(e.key), LastModified: iso8601(e.node.UpdatedAt), ETag: etag(e.node),
+				Size: e.node.Size, StorageClass: "STANDARD",
 			}
-			objects = append(objects, s3Object{
-				Key:          enc(key),
-				LastModified: iso8601(n.UpdatedAt),
-				ETag:         etag(n),
-				Size:         n.Size,
-				StorageClass: "STANDARD",
-			})
-		}); err != nil {
-			writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, err.Error())
-			return
+			if q.Get("list-type") != "2" || q.Get("fetch-owner") == "true" {
+				object.Owner = &s3Owner{ID: "nimbus", DisplayName: "nimbus"}
+			}
+			result.Contents = append(result.Contents, object)
 		}
 	}
-
-	sortObjects(objects)
-	sortCommon(common)
-
-	if marker != "" {
-		objects = filterAfter(objects, marker)
-		common = filterCommonAfter(common, marker)
-	}
-	truncated := false
-	if len(objects) > maxKeys {
-		objects = objects[:maxKeys]
-		truncated = true
-	}
-	result.Contents = objects
-	result.CommonPrefixes = common
-	result.IsTruncated = truncated
-	result.KeyCount = len(objects) + len(common)
-	result.Marker = q.Get("marker")
-	result.ContinuationToken = q.Get("continuation-token")
-	if q.Get("list-type") == "2" {
-		result.Marker = ""
-	} else {
-		result.ContinuationToken = ""
-	}
-	if truncated && len(objects) > 0 {
-		result.NextMarker = objects[len(objects)-1].Key
-		result.NextContinuationToken = objects[len(objects)-1].Key
-	}
+	result.KeyCount = len(entries)
 	writeXML(w, http.StatusOK, result)
 }
 
 func (s *Server) getObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
+		s.listParts(w, r, bucket, key, uploadID)
+		return
+	}
 	node, err := s.lookupObject(r.Context(), bucket, key)
 	if err != nil {
 		writeObjectError(w, r, err)
@@ -308,11 +357,20 @@ func (s *Server) getObject(w http.ResponseWriter, r *http.Request, bucket, key s
 		writeS3Error(w, r, http.StatusNotFound, codeNoSuchKey, "key does not exist")
 		return
 	}
-	w.Header().Set("Content-Type", downloadContentType(node.MimeType, node.Name))
+	contentType := node.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", etag(node))
 	w.Header().Set("Last-Modified", node.UpdatedAt.UTC().Format(http.TimeFormat))
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("X-Amz-Storage-Class", "STANDARD")
+	for _, header := range []string{"Content-Type", "Content-Disposition", "Content-Language", "Content-Encoding", "Cache-Control", "Expires"} {
+		if value := r.URL.Query().Get("response-" + strings.ToLower(header)); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
 
 	start, end, ok, err := parseObjectRange(r.Header.Get("Range"), node.Size)
 	if err != nil {
@@ -342,8 +400,16 @@ func (s *Server) headObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	q := r.URL.Query()
-	if uploadID := q.Get("uploadId"); uploadID != "" && q.Get("partNumber") != "" {
-		s.uploadPart(w, r, uploadID, q.Get("partNumber"))
+	if q.Has("uploadId") || q.Has("partNumber") {
+		if q.Get("uploadId") == "" || q.Get("partNumber") == "" {
+			writeS3Error(w, r, http.StatusBadRequest, codeInvalidRequest, "uploadId and partNumber are required together")
+			return
+		}
+		s.uploadPart(w, r, bucket, key, q.Get("uploadId"), q.Get("partNumber"))
+		return
+	}
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		s.copyObject(w, r, bucket, key)
 		return
 	}
 	if key == "" {
@@ -353,21 +419,6 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key s
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
-	}
-	if strings.HasSuffix(key, "/") {
-		bNode, err := bucketNodeOf(r.Context(), s.svc, bucket)
-		if err != nil {
-			writeObjectError(w, r, err)
-			return
-		}
-		folder, err := s.ensureFolderPath(r.Context(), bNode.ID, strings.TrimSuffix(key, "/"))
-		if err != nil {
-			writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
-			return
-		}
-		w.Header().Set("ETag", etag(folder))
-		w.WriteHeader(http.StatusOK)
-		return
 	}
 	node, err := s.storeObject(r.Context(), bucket, key, contentType, chunkedBody(r))
 	if err != nil {
@@ -381,6 +432,14 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key s
 func (s *Server) postObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	q := r.URL.Query()
 	if _, ok := q["uploads"]; ok {
+		if _, err := bucketNodeOf(r.Context(), s.svc, bucket); err != nil {
+			writeS3Error(w, r, http.StatusNotFound, codeNoSuchBucket, "bucket does not exist")
+			return
+		}
+		if err := validateObjectKey(key); err != nil {
+			writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
+			return
+		}
 		uploadID, err := s.multipart.create(bucket, key, r.Header.Get("Content-Type"))
 		if err != nil {
 			writeS3Error(w, r, http.StatusInternalServerError, codeInternalError, err.Error())
@@ -399,20 +458,26 @@ func (s *Server) postObject(w http.ResponseWriter, r *http.Request, bucket, key 
 func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	q := r.URL.Query()
 	if uploadID := q.Get("uploadId"); uploadID != "" {
+		if _, err := s.multipart.getForObject(uploadID, bucket, key); err != nil {
+			writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
+			return
+		}
 		s.multipart.abort(uploadID)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if node, err := s.lookupObject(r.Context(), bucket, key); err == nil {
-		_ = s.svc.Delete(r.Context(), node.ID)
-	} else if !errors.Is(err, domain.ErrNotFound) {
+	if err := s.deleteKey(r.Context(), bucket, key); err != nil {
 		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) uploadPart(w http.ResponseWriter, r *http.Request, uploadID, partNoRaw string) {
+func (s *Server) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID, partNoRaw string) {
+	if _, err := s.multipart.getForObject(uploadID, bucket, key); err != nil {
+		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
+		return
+	}
 	partNo, err := strconv.Atoi(strings.TrimSpace(partNoRaw))
 	if err != nil || partNo < 1 || partNo > 10000 {
 		writeS3Error(w, r, http.StatusBadRequest, codeInvalidPart, "part number must be 1..10000")
@@ -428,6 +493,11 @@ func (s *Server) uploadPart(w http.ResponseWriter, r *http.Request, uploadID, pa
 }
 
 func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	up, err := s.multipart.getForObject(uploadID, bucket, key)
+	if err != nil {
+		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
+		return
+	}
 	var req completeMultipartRequest
 	if err := decodeXMLBody(r, &req); err != nil {
 		writeS3Error(w, r, http.StatusBadRequest, codeMalformedXML, err.Error())
@@ -442,7 +512,7 @@ func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucke
 	// Prefer the content type from the initiate request; the complete request's
 	// own Content-Type describes its XML body, not the object.
 	contentType := "application/octet-stream"
-	if up, gerr := s.multipart.get(uploadID); gerr == nil && up.ContentType != "" {
+	if up.ContentType != "" {
 		contentType = up.ContentType
 	}
 	node, err := s.storeObject(r.Context(), bucket, key, contentType, reader)
@@ -450,6 +520,7 @@ func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucke
 		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
 		return
 	}
+	s.multipart.abort(uploadID)
 	writeXML(w, http.StatusOK, completeMultipartResult{
 		Location: "/" + bucket + "/" + key,
 		Bucket:   bucket,
@@ -461,20 +532,50 @@ func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucke
 // storeObject creates or replaces the object at key, streaming bytes straight
 // into the drive's chunked storage backend.
 func (s *Server) storeObject(ctx context.Context, bucket, key, contentType string, reader io.Reader) (domain.Node, error) {
+	if err := validateObjectKey(key); err != nil {
+		return domain.Node{}, err
+	}
+	folderPath, name := splitKey(key)
 	bNode, err := bucketNodeOf(ctx, s.svc, bucket)
 	if err != nil {
 		return domain.Node{}, err
 	}
-	folderPath, name := splitKey(key)
 	folder, err := s.ensureFolderPath(ctx, bNode.ID, folderPath)
 	if err != nil {
 		return domain.Node{}, err
 	}
-	// S3 PUT overwrites; the drive renames duplicates, so trash the incumbent first.
 	if existing, err := s.svc.Nodes.FindChildByName(ctx, folder.ID, name); err == nil {
-		_ = s.svc.Delete(ctx, existing.ID)
+		if existing.Type != domain.NodeFile {
+			return domain.Node{}, domain.ErrConflict
+		}
 	} else if !errors.Is(err, domain.ErrNotFound) {
 		return domain.Node{}, err
 	}
-	return s.svc.UploadNoDedup(ctx, folder.ID, name, contentType, reader)
+	// Stage under a unique name so concurrent PUTs cannot expose partial objects.
+	node, err := s.svc.StageObject(ctx, folder.ID, uuid.NewString(), contentType, reader)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	if err := s.svc.Nodes.Replace(ctx, node.ID, name); err != nil {
+		_ = s.svc.Delete(ctx, node.ID)
+		return domain.Node{}, err
+	}
+	return s.svc.Nodes.Get(ctx, node.ID)
+}
+
+// shortcut: keys follow drive path/name rules; use a separate key index for flat S3 namespaces.
+func validateObjectKey(key string) error {
+	if key == "" || len(key) > 1024 || !utf8.ValidString(key) {
+		return fmt.Errorf("%w: object key must be 1..1024 UTF-8 bytes", domain.ErrValidation)
+	}
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		if segment == "" && i == len(segments)-1 {
+			continue
+		}
+		if err := domain.ValidateNodeName(segment); err != nil {
+			return err
+		}
+	}
+	return nil
 }
