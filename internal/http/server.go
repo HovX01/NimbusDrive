@@ -384,11 +384,23 @@ func (s *Server) mkdir(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	// Stream multipart; spill to disk above 32MiB so huge files are not held in RAM.
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeErr(w, fmt.Errorf("%w: invalid multipart upload: %v", domain.ErrValidation, err))
+	limit, release, err := app.ReserveUpload(os.TempDir(), r.ContentLength)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
+	defer release()
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, app.ErrUploadSpace)
+		} else {
+			writeErr(w, fmt.Errorf("%w: invalid multipart upload: %v", domain.ErrValidation, err))
+		}
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeErr(w, fmt.Errorf("%w: file field required", domain.ErrValidation))
@@ -912,6 +924,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
+	case errors.Is(err, app.ErrUploadSpace):
+		status, code = http.StatusInsufficientStorage, "insufficient_storage"
 	case errors.Is(err, domain.ErrValidation):
 		status, code = http.StatusBadRequest, "validation_error"
 	case errors.Is(err, domain.ErrNotConfigured):

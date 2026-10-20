@@ -93,6 +93,11 @@ parent_id=root          (optional)
 public=true             (optional; API key responses include url by default)
 ```
 
+Files larger than 2 GiB are supported: Nimbus stores them as Telegram chunks.
+Web uploads reuse the multipart staging file for hashing and storage, rather than creating a second full-size copy.
+Staging is bounded by available temporary disk space, with 256 MiB reserved for other work and concurrent uploads accounted for. Insufficient space returns HTTP `507` (`insufficient_storage`). For unknown request lengths, the server enforces the available-space limit while reading.
+Existing proxy/request timeouts still apply. URL imports retain their 500 MiB limit, and sending a whole file to a Telegram contact retains its separate Telegram limit.
+
 **Response `201`:**
 
 ```json

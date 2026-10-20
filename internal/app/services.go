@@ -225,16 +225,16 @@ func (s *Services) Mkdir(ctx context.Context, parentID, name string) (domain.Nod
 	})
 }
 
-func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeType string, r io.Reader, _ int64) (domain.Node, error) {
-	return s.upload(ctx, parentID, filename, mimeType, r, true)
+func (s *Services) Upload(ctx context.Context, parentID, filename string, mimeType string, r io.Reader, size int64) (domain.Node, error) {
+	return s.upload(ctx, parentID, filename, mimeType, r, true, size)
 }
 
 // StageObject streams without dedup; the S3 gateway publishes it with Nodes.Replace.
 func (s *Services) StageObject(ctx context.Context, parentID, filename, mimeType string, r io.Reader) (domain.Node, error) {
-	return s.upload(ctx, parentID, filename, mimeType, r, false)
+	return s.upload(ctx, parentID, filename, mimeType, r, false, 0)
 }
 
-func (s *Services) upload(ctx context.Context, parentID, filename string, mimeType string, r io.Reader, dedup bool) (domain.Node, error) {
+func (s *Services) upload(ctx context.Context, parentID, filename string, mimeType string, r io.Reader, dedup bool, size int64) (domain.Node, error) {
 	filename = domain.SanitizeDownloadName(filename)
 	if err := domain.ValidateNodeName(filename); err != nil {
 		return domain.Node{}, err
@@ -274,46 +274,24 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 		reader = stream
 	}
 	if dedup {
-		// Dedup needs the content hash before spending Telegram parts, so buffer
-		// once to disk. The gateway streams instead (StageObject) and has no cap.
+		// Reuse seekable input; only network streams need a staging copy for dedup.
 		tmpDir := filepath.Join(s.DataDir, "upload-tmp")
 		if strings.TrimSpace(s.DataDir) == "" {
 			tmpDir = filepath.Join(os.TempDir(), "nimbus-upload")
 		}
-		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-			return domain.Node{}, err
-		}
-		tmp, err := os.CreateTemp(tmpDir, "up-*")
+		staged, hash, cleanup, err := prepareUpload(ctx, r, size, tmpDir)
 		if err != nil {
 			return domain.Node{}, err
 		}
-		tmpPath := tmp.Name()
-		defer func() {
-			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
-		}()
-		h := sha256.New()
-		written, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, (2<<30)+1))
-		if err != nil {
-			return domain.Node{}, err
-		}
-		if written == 0 {
-			return domain.Node{}, fmt.Errorf("%w: empty file", domain.ErrValidation)
-		}
-		if written > 2<<30 {
-			return domain.Node{}, fmt.Errorf("%w: file too large", domain.ErrValidation)
-		}
-		contentHash = hex.EncodeToString(h.Sum(nil))
+		defer cleanup()
+		contentHash = hash
 		if existing, err := s.Nodes.FindByContentHash(ctx, contentHash); err == nil {
 			existing.Duplicate = true
 			return existing, nil
 		} else if !errors.Is(err, domain.ErrNotFound) {
 			return domain.Node{}, err
 		}
-		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-			return domain.Node{}, err
-		}
-		reader = tmp
+		reader = staged
 	}
 
 	channelID, err := s.Blobs.EnsureStorageChannel(ctx)
@@ -353,21 +331,18 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 	}
 
 	if finalTotal == 0 {
-		_ = s.rollbackUpload(ctx, node.ID, finalParts)
-		return domain.Node{}, fmt.Errorf("%w: empty file", domain.ErrValidation)
+		return domain.Node{}, errors.Join(fmt.Errorf("%w: empty file", domain.ErrValidation), s.rollbackUpload(ctx, node.ID, finalParts))
 	}
 
 	if err := s.Parts.ReplaceParts(ctx, node.ID, finalParts); err != nil {
-		_ = s.rollbackUpload(ctx, node.ID, finalParts)
-		return domain.Node{}, err
+		return domain.Node{}, errors.Join(err, s.rollbackUpload(ctx, node.ID, finalParts))
 	}
 	if err := s.Nodes.UpdateSize(ctx, node.ID, finalTotal); err != nil {
-		_ = s.rollbackUpload(ctx, node.ID, finalParts)
-		return domain.Node{}, err
+		return domain.Node{}, errors.Join(err, s.rollbackUpload(ctx, node.ID, finalParts))
 	}
 	if dedup {
 		if err := s.Nodes.UpdateStatus(ctx, node.ID, domain.StatusReady); err != nil {
-			return domain.Node{}, err
+			return domain.Node{}, errors.Join(err, s.rollbackUpload(ctx, node.ID, finalParts))
 		}
 		node.Status = domain.StatusReady
 	}
@@ -419,9 +394,7 @@ loop:
 
 			select {
 			case <-gctx.Done():
-				_ = g.Wait()
-				_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
-				return nil, 0, "", gctx.Err()
+				return nil, 0, "", errors.Join(g.Wait(), gctx.Err(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
 			case sem <- struct{}{}:
 			}
 
@@ -448,15 +421,12 @@ loop:
 			break loop
 		}
 		if readErr != nil {
-			_ = g.Wait()
-			_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
-			return nil, 0, "", readErr
+			return nil, 0, "", errors.Join(readErr, g.Wait(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
 		}
 	}
 
 	if err := g.Wait(); err != nil {
-		_ = s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts))
-		return nil, 0, "", err
+		return nil, 0, "", errors.Join(err, s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
 	}
 
 	mu.Lock()
@@ -495,15 +465,7 @@ func snapshotParts(mu *sync.Mutex, parts *[]domain.FilePart) []domain.FilePart {
 }
 
 func (s *Services) rollbackUpload(ctx context.Context, fileID string, parts []domain.FilePart) error {
-	ids := make([]int, 0, len(parts))
-	var channelID int64
-	for _, p := range parts {
-		ids = append(ids, p.MessageID)
-		channelID = p.ChannelID
-	}
-	_ = s.Blobs.DeleteMessages(ctx, channelID, ids)
-	_ = s.Parts.DeleteByFile(ctx, fileID)
-	return s.Nodes.SoftDelete(ctx, fileID)
+	return cleanupUpload(ctx, s.Blobs, s.Parts, s.Nodes, fileID, parts)
 }
 
 func (s *Services) GetNode(ctx context.Context, id string) (domain.Node, error) {
