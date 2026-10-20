@@ -43,9 +43,10 @@ type Props = {
   jobs: UploadJob[];
   onClose: () => void;
   onDismiss: (id: string) => void;
+  onRetry: (id: string) => void;
 };
 
-export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
+export function UploadPanel({ jobs, onClose, onDismiss, onRetry }: Props) {
   const active = jobs.filter(
     (j) => j.status === "queued" || j.status === "uploading" || j.status === "processing",
   ).length;
@@ -91,10 +92,10 @@ export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
           <p className="text-xs text-muted-foreground">
             {allSettled
               ? `${done} done${failed ? ` · ${failed} error${failed === 1 ? "" : "s"}` : ""}`
-              : `${active} in progress`}
+              : `${active} in progress · Keep this tab open`}
           </p>
         </div>
-        <Button variant="ghost" size="icon-sm" aria-label="Close upload panel" onClick={onClose}>
+        <Button variant="ghost" size="icon-sm" aria-label="Close upload panel" onClick={onClose} disabled={!allSettled}>
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -112,7 +113,7 @@ export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
                 <p className="truncate text-[13px] font-medium" title={job.name}>
                   {job.name}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="break-words text-xs text-muted-foreground">
                   {job.status === "error"
                     ? job.error || "Failed"
                     : job.status === "done"
@@ -123,6 +124,17 @@ export function UploadPanel({ jobs, onClose, onDismiss }: Props) {
                           ? `${job.progress}% · ${formatBytes(job.size)}`
                           : `Queued · ${formatBytes(job.size)}`}
                 </p>
+                {job.status === "error" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="justify-self-start"
+                    aria-label={`Retry ${job.name}`}
+                    onClick={() => onRetry(job.id)}
+                  >
+                    Retry
+                  </Button>
+                )}
                 {(job.status === "uploading" ||
                   job.status === "queued" ||
                   job.status === "processing") && (

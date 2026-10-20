@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearAccessKey,
   createShare,
@@ -47,6 +47,12 @@ const TOKEN_KEY = "nimbus_token";
 
 type ToastKind = "success" | "error" | "info";
 
+type UploadTask = UploadJob & {
+  file?: File;
+  parentId: string;
+  token: string;
+};
+
 type ConfirmState = {
   title: string;
   message: string;
@@ -67,6 +73,7 @@ export default function App() {
     { id: "root", name: "My Drive" },
   ]);
   const [items, setItems] = useState<Node[]>([]);
+  const [filesVersion, setFilesVersion] = useState(0);
   const [trashItems, setTrashItems] = useState<Node[]>([]);
   const [section, setSection] = useState<"drive" | "trash" | "settings" | "buckets" | "dashboard">("dashboard");
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
@@ -77,8 +84,8 @@ export default function App() {
   const [sendError, setSendError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploads, setUploads] = useState<UploadJob[]>([]);
-
+  const [uploads, setUploads] = useState<UploadTask[]>([]);
+  const runningUploads = useRef(new Set<string>());
 
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [mkdirOpen, setMkdirOpen] = useState(false);
@@ -212,13 +219,15 @@ export default function App() {
 
   useEffect(() => {
     if (!token) return;
+    let cancelled = false;
     setBusy(true);
     setError("");
     listFiles(token, parentId)
-      .then((r) => setItems(r.items ?? []))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
-  }, [token, parentId]);
+      .then((r) => { if (!cancelled) setItems(r.items ?? []); })
+      .catch((e: Error) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, [token, parentId, filesVersion]);
 
   async function refreshTrash() {
     if (!token) return;
@@ -458,62 +467,90 @@ export default function App() {
     }
   }
 
-  function patchUpload(id: string, patch: Partial<UploadJob>) {
+  const patchUpload = useCallback((id: string, patch: Partial<UploadTask>) => {
     setUploads((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
-  }
+  }, []);
 
-  const clearUploads = useCallback(() => setUploads([]), []);
+  const clearUploads = useCallback(
+    () => setUploads((prev) => prev.filter((j) => j.status !== "done" && j.status !== "error")),
+    [],
+  );
   const dismissUpload = useCallback(
-    (id: string) => setUploads((prev) => prev.filter((j) => j.id !== id)),
+    (id: string) => setUploads((prev) => prev.filter(
+      (j) => j.id !== id || (j.status !== "done" && j.status !== "error"),
+    )),
     [],
   );
 
-  async function onUpload(files: FileList | File[]) {
+  function retryUpload(id: string) {
+    if (!token) return;
+    setUploads((prev) => prev.map((job) =>
+      job.id === id && job.status === "error" && job.file
+        ? { ...job, token, status: "queued", progress: 0, error: undefined }
+        : job,
+    ));
+  }
+
+  function onUpload(files: FileList | File[]) {
     if (!token) return;
     const list = Array.from(files);
     if (!list.length) return;
 
-    const jobs: UploadJob[] = list.map((file) => ({
+    const jobs: UploadTask[] = list.map((file) => ({
       id: `${Date.now()}-${file.name}-${Math.random().toString(36).slice(2, 8)}`,
       name: file.name,
       size: file.size,
       progress: 0,
       status: "queued",
+      file,
+      parentId,
+      token,
     }));
-    setUploads((prev) => [...jobs, ...prev].slice(0, 20));
+    setUploads((prev) => [...prev.filter((j) => j.status !== "done"), ...jobs]);
     setError("");
+  }
 
-    const concurrency = Math.min(3, list.length);
-    let cursor = 0;
-
-    async function worker() {
-      while (cursor < list.length) {
-        const i = cursor++;
-        const file = list[i];
-        const job = jobs[i];
-        patchUpload(job.id, { status: "uploading", progress: 0 });
+  useEffect(() => {
+    for (const job of uploads) {
+      if (runningUploads.current.size >= 3) break;
+      const file = job.file;
+      if (job.status !== "queued" || !file || runningUploads.current.has(job.id)) continue;
+      runningUploads.current.add(job.id);
+      patchUpload(job.id, { status: "uploading", progress: 0 });
+      void (async () => {
         try {
           const node = await uploadFile(
-            token!,
-            parentId,
+            job.token,
+            job.parentId,
             file,
             (pct) => patchUpload(job.id, { progress: pct, status: "uploading" }),
             () => patchUpload(job.id, { progress: 100, status: "processing" }),
           );
-          patchUpload(job.id, { status: "done", progress: 100 });
+          patchUpload(job.id, { status: "done", progress: 100, file: undefined });
+          setFilesVersion((version) => version + 1);
           if (node.duplicate) pushToast(`${file.name} already in Drive`, "info");
           else pushToast(`Uploaded ${file.name}`, "success");
-          const r = await listFiles(token!, parentId);
-          setItems(r.items ?? []);
         } catch (e) {
           patchUpload(job.id, { status: "error", error: (e as Error).message });
           pushToast((e as Error).message, "error");
+        } finally {
+          runningUploads.current.delete(job.id);
         }
-      }
+      })();
     }
+  }, [uploads, patchUpload]);
 
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  }
+  // shortcut: queue lives in this tab; resumable uploads need server support.
+  const hasPendingUploads = uploads.some((job) => !!job.file);
+  useEffect(() => {
+    if (!hasPendingUploads) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasPendingUploads]);
 
   async function onRename(id: string, currentName: string) {
     if (!token) return;
@@ -924,7 +961,7 @@ export default function App() {
         onConfirm={(name) => void doRename(name)}
       />
       <Toaster />
-      <UploadPanel jobs={uploads} onClose={clearUploads} onDismiss={dismissUpload} />
+      <UploadPanel jobs={uploads} onClose={clearUploads} onDismiss={dismissUpload} onRetry={retryUpload} />
     </>
   );
 }

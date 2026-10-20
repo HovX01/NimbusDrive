@@ -470,7 +470,7 @@ func (c *Client) UploadPart(ctx context.Context, channelID int64, partNo int, na
 	if err != nil {
 		return 0, err
 	}
-	up := uploader.NewUploader(api)
+	up := uploader.NewUploader(api).WithPartSize(uploader.MaximumPartSize)
 	file, err := up.Upload(ctx, uploader.NewUpload(fmt.Sprintf("%s.part%04d", name, partNo), r, size))
 	if err != nil {
 		return 0, err

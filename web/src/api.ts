@@ -208,12 +208,18 @@ export async function uploadFile(
         /* ignore */
       }
       if (xhr.status >= 200 && xhr.status < 300) {
+        if (typeof data?.id !== "string" || !data.id) {
+          reject(new Error("Invalid upload response. Check Drive before retrying."));
+          return;
+        }
         resolve(data as Node);
         return;
       }
       reject(new Error(data?.error?.message ?? (xhr.statusText || "Upload failed")));
     };
-    xhr.onerror = () => reject(new Error("Upload failed"));
+    xhr.onerror = () => reject(new Error("Upload failed. Check your connection and retry."));
+    xhr.onabort = () => reject(new Error("Upload cancelled. Retry the upload."));
+    xhr.ontimeout = () => reject(new Error("Upload timed out. Retry the upload."));
     xhr.send(fd);
   });
 }
