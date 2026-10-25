@@ -123,3 +123,8 @@ type SocialOAuthConfigRepository interface {
 	GetSocialOAuthConfig(ctx context.Context, provider SocialProvider) (SocialOAuthAppConfig, error)
 	UpsertSocialOAuthConfig(ctx context.Context, c SocialOAuthAppConfig) (SocialOAuthAppConfig, error)
 }
+
+// DatabaseImporter merges a Nimbus SQLite snapshot into the live store.
+type DatabaseImporter interface {
+	MergeDatabase(ctx context.Context, sourcePath string) (ImportSummary, error)
+}

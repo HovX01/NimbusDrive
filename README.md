@@ -107,6 +107,28 @@ curl -fsS -X POST "https://your-host/api/v1/backups/telegram" \
 
 The response includes the backup name, Telegram message ID, size, and SHA-256. `GET /api/v1/backups/telegram` lists locally indexed backups. Set `NIMBUS_DB_BACKUP_ENABLED=false` to disable, `NIMBUS_DB_BACKUP_PREFIX` to change the searchable name prefix, and `NIMBUS_DB_BACKUP_KEEP` to retain only the newest N backups (0 keeps all). To restore, stop Nimbus, replace `/data/nimbus.db` with the downloaded `.sqlite` snapshot, remove stale `nimbus.db-wal` / `nimbus.db-shm` files, and restart.
 
+### Merge an old database
+
+Use **Settings → Backup → Import old database** to merge a `.sqlite` snapshot into the live drive. The merge is additive: existing rows are kept.
+
+- Folders with the same name at the same path are merged.
+- Files whose content hash already exists are skipped.
+- A different file with the same name is imported as `name (imported).ext`.
+- Deleted/trash entries and unfinished uploads are skipped.
+- File parts and hashes are remapped to the imported file IDs.
+- Shares, editor projects, data rows, bot grants, social accounts and OAuth configs are imported only when they do not already exist.
+
+The snapshot holds metadata and Telegram message references, not file bytes. Imported files open only while their original Telegram channel and messages remain available.
+
+The same merge is available over HTTP:
+
+```bash
+curl -fsS -X POST "https://your-host/api/v1/backups/import" \
+  -H "X-Nimbus-Access: $NIMBUS_ACCESS_SECRET" \
+  -H "X-Nimbus-Key: $NIMBUS_API_KEY" \
+  -F "file=@nimbus-db-backup.sqlite"
+```
+
 ### Media fetch engine
 
 Nimbus keeps its existing native extractors and configured API fallbacks. When those cannot resolve a link, it can fall back to local `yt-dlp` for broad site support and high-quality video/audio merging via `ffmpeg`. The Docker image includes both `yt-dlp` and `ffmpeg`; bare-metal installs can set `NIMBUS_YTDLP_PATH`.

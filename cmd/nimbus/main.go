@@ -95,6 +95,7 @@ func main() {
 		DataDir:       cfg.DataDir,
 		UploadWorkers: cfg.UploadWorkers,
 		BackupSecret:  cfg.BackupSecret,
+		DBImport:      store,
 	}
 	backupSvc := backup.NewService(cfg.DataDir, store, svc, store)
 	svc.Backup = backupSvc

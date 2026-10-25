@@ -161,6 +161,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/backups", s.startBackup)
 				r.Post("/backups/telegram", s.startTelegramBackup)
 				r.Get("/backups/telegram", s.listTelegramBackups)
+				r.Post("/backups/import", s.importDatabase)
 				r.Get("/backups/{jobID}", s.backupStatus)
 				r.Get("/auth/me", s.me)
 				r.Get("/auth/avatar", s.avatar)

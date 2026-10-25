@@ -461,6 +461,36 @@ export async function backupStatus(token: string, jobId: string) {
   );
 }
 
+export type ImportSummary = {
+  folders_merged: number;
+  folders_created: number;
+  files_imported: number;
+  files_skipped: number;
+  files_renamed: number;
+  parts_imported: number;
+  hashes_imported: number;
+  shares_imported: number;
+  edit_projects_imported: number;
+  data_rows_imported: number;
+  bot_grants_imported: number;
+  social_connections_imported: number;
+  social_oauth_configs_imported: number;
+  nodes_skipped: number;
+  warnings?: string[];
+};
+
+export async function importDatabaseBackup(token: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return parse<ImportSummary>(
+    await fetch(`${API}/api/v1/backups/import`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: form,
+    }),
+  );
+}
+
 export type S3Settings = {
   enabled: boolean;
   region: string;

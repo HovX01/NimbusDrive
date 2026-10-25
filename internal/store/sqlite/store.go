@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +18,9 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db       *sql.DB
+	path     string
+	importMu sync.Mutex
 }
 
 func Open(databaseURL string) (*Store, error) {
@@ -30,7 +33,7 @@ func Open(databaseURL string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err

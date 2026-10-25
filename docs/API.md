@@ -372,6 +372,45 @@ Response:
 
 `GET /api/v1/backups/telegram` lists locally indexed backups. Set `NIMBUS_DB_BACKUP_KEEP` to prune older backups (`0` keeps all). Restore by stopping Nimbus, replacing `/data/nimbus.db` with the downloaded snapshot, removing stale `nimbus.db-wal` / `nimbus.db-shm` files, and restarting.
 
+### Merge an old database
+
+Upload a Nimbus `.sqlite` snapshot and merge it into the live drive. The operation is additive: existing rows win.
+
+```http
+POST /api/v1/backups/import
+Content-Type: multipart/form-data
+X-Nimbus-Access: <access-secret>
+X-Nimbus-Key: <api-key>
+
+file=<nimbus-db-backup.sqlite>
+```
+
+```bash
+curl -fsS -X POST "https://your-host/api/v1/backups/import" \
+  -H "X-Nimbus-Access: $NIMBUS_ACCESS_SECRET" \
+  -H "X-Nimbus-Key: $NIMBUS_API_KEY" \
+  -F "file=@nimbus-db-backup.sqlite"
+```
+
+Folders merge by name at the same path. Files with an existing content hash are skipped; same-name files with different content become `name (imported).ext`. Deleted/trash entries and unfinished uploads are skipped. File parts, hashes, shares, editor projects and supported app rows are remapped. The response is a summary:
+
+```json
+{
+  "folders_merged": 2,
+  "folders_created": 1,
+  "files_imported": 3,
+  "files_skipped": 1,
+  "files_renamed": 1,
+  "parts_imported": 5,
+  "hashes_imported": 3,
+  "shares_imported": 0,
+  "edit_projects_imported": 0,
+  "nodes_skipped": 0
+}
+```
+
+The snapshot references Telegram messages but does not contain file bytes. Imported files remain readable only while the original channel and messages are accessible.
+
 ---
 
 ## Auth & setup (Telegram)

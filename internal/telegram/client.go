@@ -39,6 +39,7 @@ type Client struct {
 	api      *tg.Client
 	self     *tg.User
 	channel  *tg.Channel
+	channels map[int64]*tg.Channel
 	authFlow pendingAuth
 
 	contactsMu   sync.Mutex
@@ -53,10 +54,11 @@ type pendingAuth struct {
 
 func New(apiID int, apiHash, dataDir string) *Client {
 	c := &Client{
-		apiID:   apiID,
-		apiHash: strings.TrimSpace(apiHash),
-		dataDir: dataDir,
-		ready:   make(chan struct{}),
+		apiID:    apiID,
+		apiHash:  strings.TrimSpace(apiHash),
+		dataDir:  dataDir,
+		ready:    make(chan struct{}),
+		channels: make(map[int64]*tg.Channel),
 	}
 	// Prefer saved UI credentials over empty env.
 	if id, hash, ok := c.loadStoredCreds(); ok {
@@ -110,6 +112,7 @@ func (c *Client) Configure(ctx context.Context, apiID int, apiHash string) error
 	c.api = nil
 	c.self = nil
 	c.channel = nil
+	c.channels = make(map[int64]*tg.Channel)
 	c.ready = make(chan struct{})
 	parent := c.parent
 	if parent == nil {
@@ -405,6 +408,7 @@ func (c *Client) AuthDisconnect(ctx context.Context) error {
 	c.mu.Lock()
 	c.self = nil
 	c.channel = nil
+	c.channels = make(map[int64]*tg.Channel)
 	c.mu.Unlock()
 	_ = os.Remove(c.sessionPath())
 	return err
@@ -439,6 +443,10 @@ func (c *Client) EnsureStorageChannel(ctx context.Context) (int64, error) {
 	if ch := findNimbusChannel(dialogs); ch != nil {
 		c.mu.Lock()
 		c.channel = ch
+		if c.channels == nil {
+			c.channels = make(map[int64]*tg.Channel)
+		}
+		c.channels[ch.ID] = ch
 		c.mu.Unlock()
 		return ch.ID, nil
 	}
@@ -457,6 +465,7 @@ func (c *Client) EnsureStorageChannel(ctx context.Context) (int64, error) {
 	}
 	c.mu.Lock()
 	c.channel = ch
+	c.channels[ch.ID] = ch
 	c.mu.Unlock()
 	return ch.ID, nil
 }
@@ -561,25 +570,59 @@ func (c *Client) DeleteMessages(ctx context.Context, channelID int64, messageIDs
 
 func (c *Client) inputChannel(ctx context.Context, channelID int64) (*tg.InputChannel, error) {
 	c.mu.Lock()
-	ch := c.channel
-	c.mu.Unlock()
-	if ch != nil && ch.ID == channelID {
+	if c.channel != nil && c.channel.ID == channelID {
+		ch := c.channel
+		c.mu.Unlock()
 		return &tg.InputChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}, nil
 	}
-	// Refresh by ensuring storage channel (single-channel MVP).
-	id, err := c.EnsureStorageChannel(ctx)
+	if ch := c.channels[channelID]; ch != nil {
+		c.mu.Unlock()
+		return &tg.InputChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}, nil
+	}
+	c.mu.Unlock()
+
+	api, err := c.waitAPI(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if id != channelID {
-		return nil, fmt.Errorf("unknown channel %d", channelID)
+	dialogs, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      100,
+	})
+	if err != nil {
+		return nil, err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return &tg.InputChannel{ChannelID: c.channel.ID, AccessHash: c.channel.AccessHash}, nil
+	if ch := findChannelByID(dialogs, channelID); ch != nil {
+		c.mu.Lock()
+		if c.channels == nil {
+			c.channels = make(map[int64]*tg.Channel)
+		}
+		c.channels[ch.ID] = ch
+		c.mu.Unlock()
+		return &tg.InputChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}, nil
+	}
+	return nil, fmt.Errorf("unknown channel %d", channelID)
 }
 
 func findNimbusChannel(dialogs tg.MessagesDialogsClass) *tg.Channel {
+	for _, ch := range dialogChannels(dialogs) {
+		if ch.Title == storageChannelTitle {
+			return ch
+		}
+	}
+	return nil
+}
+
+func findChannelByID(dialogs tg.MessagesDialogsClass, id int64) *tg.Channel {
+	for _, ch := range dialogChannels(dialogs) {
+		if ch.ID == id {
+			return ch
+		}
+	}
+	return nil
+}
+
+func dialogChannels(dialogs tg.MessagesDialogsClass) []*tg.Channel {
 	var chats []tg.ChatClass
 	switch d := dialogs.(type) {
 	case *tg.MessagesDialogs:
@@ -589,16 +632,13 @@ func findNimbusChannel(dialogs tg.MessagesDialogsClass) *tg.Channel {
 	default:
 		return nil
 	}
+	out := make([]*tg.Channel, 0, len(chats))
 	for _, chat := range chats {
-		ch, ok := chat.(*tg.Channel)
-		if !ok {
-			continue
-		}
-		if ch.Title == storageChannelTitle {
-			return ch
+		if ch, ok := chat.(*tg.Channel); ok {
+			out = append(out, ch)
 		}
 	}
-	return nil
+	return out
 }
 
 func channelFromUpdates(u tg.UpdatesClass) (*tg.Channel, error) {

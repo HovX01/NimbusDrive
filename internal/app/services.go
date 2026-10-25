@@ -46,6 +46,7 @@ type Services struct {
 	UploadWorkers int
 	Backup        *backup.Service
 	DBBackup      *dbbackup.Service
+	DBImport      domain.DatabaseImporter
 	BackupSecret  string
 
 	fetchOnce sync.Once

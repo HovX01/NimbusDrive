@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Check, Copy, Loader2 } from "lucide-react";
+import { Bot, Check, Copy, Loader2, Upload } from "lucide-react";
 import {
   addSocialCookieConnection,
   disconnectSocialConnection,
   fetchStorageSettings,
   fetchBackupSettings,
+  importDatabaseBackup,
   saveBackupSettings,
   testBackupSettings,
   startBackup,
@@ -15,6 +16,7 @@ import {
   setBotAllowed,
   setActiveSocialConnection,
   setSocialConnectionEnabled,
+  type ImportSummary,
   type SocialConnection,
   type SocialProvider,
   type TelegramBot,
@@ -82,6 +84,11 @@ export function SettingsPage({ token }: Props) {
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState("");
   const [backupError, setBackupError] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState<ImportSummary | null>(null);
   const [s3, setS3] = useState<{
     enabled: boolean;
     region: string;
@@ -275,6 +282,29 @@ export function SettingsPage({ token }: Props) {
       setBackupError((e as Error).message);
     } finally {
       setBackupBusy(false);
+    }
+  }
+
+  async function handleImportDatabase() {
+    if (!importFile) {
+      setImportError("Choose a Nimbus .sqlite backup first.");
+      return;
+    }
+    setImportBusy(true);
+    setImportError("");
+    setImportMessage("");
+    setImportResult(null);
+    try {
+      const result = await importDatabaseBackup(token, importFile);
+      setImportResult(result);
+      setImportMessage(
+        `Merged ${result.files_imported} files, ${result.folders_created} folders and ${result.parts_imported} parts.`,
+      );
+      setImportFile(null);
+    } catch (e) {
+      setImportError((e as Error).message);
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -569,6 +599,69 @@ export function SettingsPage({ token }: Props) {
                   Run backup now
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Import old database</CardTitle>
+              <CardDescription>
+                Merge a Nimbus .sqlite backup into this drive. Folders with matching names merge, duplicate files are skipped, and conflicting file names get an “imported” suffix. Existing data is kept.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {importError && (
+                <Alert variant="destructive">
+                  <AlertDescription>{importError}</AlertDescription>
+                </Alert>
+              )}
+              {importMessage && (
+                <Alert>
+                  <Check className="h-4 w-4 text-green-600" />
+                  <AlertDescription>{importMessage}</AlertDescription>
+                </Alert>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  type="file"
+                  accept=".sqlite,.db,application/vnd.sqlite3,application/x-sqlite3"
+                  onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                  disabled={importBusy}
+                />
+                <Button disabled={!importFile || importBusy} onClick={() => void handleImportDatabase()}>
+                  {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {importBusy ? "Merging…" : "Merge database"}
+                </Button>
+              </div>
+              {importResult && (
+                <div className="grid gap-3">
+                  <div className="grid gap-x-5 gap-y-1 text-sm sm:grid-cols-2">
+                    <span>Folders merged: {importResult.folders_merged}</span>
+                    <span>Folders created: {importResult.folders_created}</span>
+                    <span>Files imported: {importResult.files_imported}</span>
+                    <span>Duplicate files skipped: {importResult.files_skipped}</span>
+                    <span>Files renamed: {importResult.files_renamed}</span>
+                    <span>Parts imported: {importResult.parts_imported}</span>
+                    <span>Shares imported: {importResult.shares_imported}</span>
+                    <span>Editor projects: {importResult.edit_projects_imported}</span>
+                    <span>Data rows: {importResult.data_rows_imported}</span>
+                    <span>Bot grants: {importResult.bot_grants_imported}</span>
+                    <span>Social accounts: {importResult.social_connections_imported}</span>
+                    <span>OAuth configs: {importResult.social_oauth_configs_imported}</span>
+                  </div>
+                  {importResult.warnings?.length ? (
+                    <Alert>
+                      <AlertDescription>
+                        <div className="grid gap-1">
+                          {importResult.warnings.map((warning, index) => (
+                            <span key={index}>{warning}</span>
+                          ))}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
