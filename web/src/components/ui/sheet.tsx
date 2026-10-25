@@ -26,8 +26,8 @@ const SheetOverlay = React.forwardRef<
 SheetOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 const sideClasses: Record<"left" | "right", string> = {
-  left: "inset-y-0 left-0 h-full border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
-  right: "inset-y-0 right-0 h-full border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+  left: "inset-y-0 left-0 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
+  right: "inset-y-0 right-0 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
 };
 
 type SheetContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
@@ -45,14 +45,17 @@ const SheetContent = React.forwardRef<
       className={cn(
         // Only animate transform; let the keyframes own timing so nothing
         // fights them. will-change keeps the panel on its own layer.
-        "fixed z-50 flex w-[280px] flex-col gap-2 bg-card p-3 shadow-xl will-change-transform data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-300 data-[state=closed]:duration-200",
+        "fixed z-50 flex w-[280px] flex-col bg-card shadow-xl will-change-transform data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-300 data-[state=closed]:duration-200",
+        "h-dvh",
         sideClasses[side],
         className,
       )}
       {...props}
     >
-      {children}
-      <DialogPrimitive.Close className="absolute right-3 top-3 rounded-lg p-1 text-muted-foreground opacity-70 transition-opacity hover:bg-muted hover:opacity-100 focus:outline-none">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-3">
+        {children}
+      </div>
+      <DialogPrimitive.Close className="absolute right-3 top-3 rounded-lg p-1 text-muted-foreground opacity-70 transition-opacity before:absolute before:-inset-2.5 before:content-[''] hover:bg-muted hover:opacity-100 focus:outline-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

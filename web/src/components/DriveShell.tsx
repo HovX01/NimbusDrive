@@ -509,7 +509,7 @@ export function DriveShell(props: Props) {
                 aria-current={item.active ? "page" : undefined}
                 aria-label={item.label}
                 className={cn(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors max-lg:min-h-11",
                   collapsible && collapsed && "lg:gap-0 lg:justify-center lg:px-0 lg:py-2.5",
                   item.active
                     ? "bg-muted text-foreground"
