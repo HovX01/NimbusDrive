@@ -35,7 +35,7 @@ type fakeBlobs struct {
 
 func (f *fakeBlobs) EnsureStorageChannel(context.Context) (int64, error) { return 42, nil }
 
-func (f *fakeBlobs) UploadPart(context.Context, int64, io.Reader, int64) (int, error) {
+func (f *fakeBlobs) UploadPart(context.Context, int64, int, string, io.Reader, int64) (int, error) {
 	return 0, nil
 }
 

@@ -61,8 +61,8 @@ func Load() (Config, error) {
 		TelegramBotAPIURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_API_URL")), "/"),
 		TelegramBotToken:      strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramStorageChatID: strings.TrimSpace(os.Getenv("TELEGRAM_STORAGE_CHAT_ID")),
-		ChunkSize:             getenvInt("CHUNK_SIZE", 200*1024*1024),
-		UploadWorkers:         getenvInt("UPLOAD_WORKERS", 2),
+		ChunkSize:             getenvInt("CHUNK_SIZE", 8*1024*1024),
+		UploadWorkers:         getenvInt("UPLOAD_WORKERS", 3),
 		DBBackupEnabled:       getenvBool("NIMBUS_DB_BACKUP_ENABLED", true),
 		DBBackupPrefix:        getenv("NIMBUS_DB_BACKUP_PREFIX", "nimbus-db-backup"),
 		DBBackupKeep:          getenvInt("NIMBUS_DB_BACKUP_KEEP", 0),
@@ -142,14 +142,17 @@ func Load() (Config, error) {
 
 	if cfg.TelegramBotAPIURL != "" {
 		if botChunk := getenvInt("TELEGRAM_BOT_CHUNK_SIZE", 0); botChunk > 0 {
-			maxBotChunk := 800 * 1024 * 1024
-			if botChunk > maxBotChunk {
-				botChunk = maxBotChunk
-			}
 			if botChunk >= 64*1024 {
 				cfg.ChunkSize = botChunk
 			}
 		}
+	}
+
+	// Every worker holds one chunk in memory. Keep the historical 8 MiB cap so
+	// a stale deployment env cannot silently reserve hundreds of MiB per upload.
+	const maxChunkSize = 8 << 20
+	if cfg.ChunkSize > maxChunkSize {
+		cfg.ChunkSize = maxChunkSize
 	}
 
 	if cfg.S3Region == "" {

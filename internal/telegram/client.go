@@ -470,12 +470,37 @@ func (c *Client) EnsureStorageChannel(ctx context.Context) (int64, error) {
 	return ch.ID, nil
 }
 
-func (c *Client) UploadPart(ctx context.Context, channelID int64, r io.Reader, size int64) (int, error) {
-	name, err := chunkObjectName()
+func (c *Client) UploadPart(ctx context.Context, channelID int64, partNo int, name string, r io.Reader, size int64) (int, error) {
+	api, err := c.waitAPI(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return c.UploadDocument(ctx, channelID, name, "", r, size)
+	ch, err := c.inputChannel(ctx, channelID)
+	if err != nil {
+		return 0, err
+	}
+	filename := fmt.Sprintf("%s.part%04d", name, partNo)
+	up := uploader.NewUploader(api).WithPartSize(uploader.MaximumPartSize)
+	file, err := up.Upload(ctx, uploader.NewUpload(filename, r, size))
+	if err != nil {
+		return 0, err
+	}
+	updates, err := api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+		Peer: &tg.InputPeerChannel{ChannelID: ch.ChannelID, AccessHash: ch.AccessHash},
+		Media: &tg.InputMediaUploadedDocument{
+			File:     file,
+			MimeType: "application/octet-stream",
+			Attributes: []tg.DocumentAttributeClass{
+				&tg.DocumentAttributeFilename{FileName: filename},
+			},
+		},
+		Message:  fmt.Sprintf("nimbus-part:%d", partNo),
+		RandomID: newRandomID(),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return messageIDFromUpdates(updates)
 }
 
 func (c *Client) UploadDocument(ctx context.Context, channelID int64, name, caption string, r io.Reader, size int64) (int, error) {

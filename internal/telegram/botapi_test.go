@@ -64,8 +64,8 @@ func TestBotAPIUploadDocumentKeepsBackupNameAndCaption(t *testing.T) {
 	}
 }
 
-func TestBotAPIUploadPartStaysOpaque(t *testing.T) {
-	var names []string
+func TestBotAPIUploadPartUsesLegacyNameAndCaption(t *testing.T) {
+	var filename, caption string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Errorf("parse multipart: %v", err)
@@ -76,26 +76,20 @@ func TestBotAPIUploadPartStaysOpaque(t *testing.T) {
 			t.Errorf("expected one document, got %d", len(files))
 			return
 		}
-		names = append(names, files[0].Filename)
-		if caption := r.FormValue("caption"); caption != "" {
-			t.Errorf("chunk upload leaked caption: %q", caption)
-		}
+		filename = files[0].Filename
+		caption = r.FormValue("caption")
 		_, _ = fmt.Fprint(w, `{"ok":true,"result":{"message_id":1}}`)
 	}))
 	defer srv.Close()
 
 	client := NewBotAPI(srv.URL, "token", "123")
-	for i := 0; i < 2; i++ {
-		if _, err := client.UploadPart(context.Background(), 0, strings.NewReader("chunk"), 5); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := client.UploadPart(context.Background(), 0, 2, "node-id", strings.NewReader("chunk"), 5); err != nil {
+		t.Fatal(err)
 	}
-	if len(names) != 2 || names[0] == names[1] {
-		t.Fatalf("chunk names not unique: %v", names)
+	if filename != "node-id.part0002" {
+		t.Fatalf("filename = %q", filename)
 	}
-	for _, name := range names {
-		if !strings.HasSuffix(name, ".bin") || strings.Contains(name, "nimbus") || strings.Contains(name, "part") {
-			t.Fatalf("chunk name is identifiable: %q", name)
-		}
+	if caption != "nimbus-part:2" {
+		t.Fatalf("caption = %q", caption)
 	}
 }

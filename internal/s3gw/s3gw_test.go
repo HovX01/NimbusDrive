@@ -46,7 +46,7 @@ func newFakeBlobs() *fakeBlobs {
 
 func (b *fakeBlobs) EnsureStorageChannel(_ context.Context) (int64, error) { return 1, nil }
 
-func (b *fakeBlobs) UploadPart(_ context.Context, channelID int64, r io.Reader, _ int64) (int, error) {
+func (b *fakeBlobs) UploadPart(_ context.Context, channelID int64, _ int, _ string, r io.Reader, _ int64) (int, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
@@ -64,7 +64,7 @@ func (b *fakeBlobs) UploadPart(_ context.Context, channelID int64, r io.Reader, 
 }
 
 func (b *fakeBlobs) UploadDocument(ctx context.Context, channelID int64, _, _ string, r io.Reader, size int64) (int, error) {
-	return b.UploadPart(ctx, channelID, r, size)
+	return b.UploadPart(ctx, channelID, 1, "backup", r, size)
 }
 
 func (b *fakeBlobs) DownloadPart(_ context.Context, channelID int64, messageID int, w io.Writer) error {

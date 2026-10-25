@@ -319,11 +319,11 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 
 	chunkSize := s.ChunkSize
 	if chunkSize <= 0 {
-		chunkSize = 200 << 20
+		chunkSize = 8 << 20
 	}
 	workers := s.UploadWorkers
 	if workers <= 0 {
-		workers = 2
+		workers = 3
 	}
 
 	finalParts, finalTotal, streamedHash, err := s.uploadParts(ctx, channelID, node.ID, reader, chunkSize, workers, contentHash == "")
@@ -371,7 +371,6 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(workers)
 	sem := make(chan struct{}, workers)
-	buf := make([]byte, chunkSize)
 	hasher := sha256.New()
 
 	var (
@@ -381,19 +380,18 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 		partNo int
 	)
 
-loop:
 	for {
-		n, readErr := io.ReadFull(r, buf)
-		if n > 0 {
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
+		// Read only what exists. Preallocating CHUNK_SIZE here is what made a
+		// 500 KiB object reserve hundreds of MiB under the old 200 MiB default.
+		chunk, readErr := io.ReadAll(io.LimitReader(r, int64(chunkSize)))
+		if len(chunk) > 0 {
 			if hash {
 				hasher.Write(chunk)
 			}
 			mu.Lock()
 			pn := partNo
 			partNo++
-			total += int64(n)
+			total += int64(len(chunk))
 			mu.Unlock()
 
 			select {
@@ -404,7 +402,7 @@ loop:
 
 			g.Go(func() error {
 				defer func() { <-sem }()
-				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, bytes.NewReader(chunk), int64(len(chunk)))
+				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, pn, nodeID, bytes.NewReader(chunk), int64(len(chunk)))
 				if upErr != nil {
 					return upErr
 				}
@@ -421,11 +419,11 @@ loop:
 				return nil
 			})
 		}
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			break loop
-		}
 		if readErr != nil {
 			return nil, 0, "", errors.Join(readErr, g.Wait(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
+		}
+		if len(chunk) == 0 || len(chunk) < chunkSize {
+			break
 		}
 	}
 

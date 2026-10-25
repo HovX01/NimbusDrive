@@ -42,8 +42,8 @@ type indexFile struct {
 }
 
 // Service snapshots the metadata database and uploads it as one named
-// Telegram document. Chunk data remains opaque; database backups are
-// deliberately named so they are easy to find in the channel.
+// Telegram document. Database backups are deliberately named so they are easy
+// to find in the channel.
 type Service struct {
 	dataDir string
 	db      DatabaseSource

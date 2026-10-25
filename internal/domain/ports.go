@@ -39,7 +39,7 @@ type PartRepository interface {
 // BlobStore is the object storage port (Telegram channel behind the scenes).
 type BlobStore interface {
 	EnsureStorageChannel(ctx context.Context) (channelID int64, err error)
-	UploadPart(ctx context.Context, channelID int64, r io.Reader, size int64) (messageID int, err error)
+	UploadPart(ctx context.Context, channelID int64, partNo int, name string, r io.Reader, size int64) (messageID int, err error)
 	UploadDocument(ctx context.Context, channelID int64, name, caption string, r io.Reader, size int64) (messageID int, err error)
 	DownloadPart(ctx context.Context, channelID int64, messageID int, w io.Writer) error
 	DeleteMessages(ctx context.Context, channelID int64, messageIDs []int) error

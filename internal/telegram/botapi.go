@@ -83,12 +83,53 @@ func (b *BotAPIClient) EnsureStorageChannel(ctx context.Context) (int64, error) 
 	return chat.ID, nil
 }
 
-func (b *BotAPIClient) UploadPart(ctx context.Context, channelID int64, r io.Reader, size int64) (int, error) {
-	name, err := chunkObjectName()
+func (b *BotAPIClient) UploadPart(ctx context.Context, channelID int64, partNo int, name string, r io.Reader, size int64) (int, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	if err := w.WriteField("chat_id", b.chatID); err != nil {
+		return 0, err
+	}
+	if err := w.WriteField("caption", fmt.Sprintf("nimbus-part:%d", partNo)); err != nil {
+		return 0, err
+	}
+	filename := fmt.Sprintf("%s.part%04d", name, partNo)
+	part, err := w.CreateFormFile("document", filename)
 	if err != nil {
 		return 0, err
 	}
-	return b.UploadDocument(ctx, channelID, name, "", r, size)
+	if _, err := io.Copy(part, r); err != nil {
+		return 0, err
+	}
+	if err := w.Close(); err != nil {
+		return 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.botURL("sendDocument"), &buf)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("bot api sendDocument: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result botResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("bot api decode: %w", err)
+	}
+	if !result.OK {
+		return 0, fmt.Errorf("bot api sendDocument failed")
+	}
+
+	var msg botMessage
+	if err := json.Unmarshal(result.Result, &msg); err != nil {
+		return 0, fmt.Errorf("bot api parse message: %w", err)
+	}
+	return msg.MessageID, nil
 }
 
 func (b *BotAPIClient) UploadDocument(ctx context.Context, channelID int64, name, caption string, r io.Reader, size int64) (int, error) {
