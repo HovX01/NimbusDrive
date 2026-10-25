@@ -148,9 +148,9 @@ func Load() (Config, error) {
 		}
 	}
 
-	// Every worker holds one chunk in memory. Keep the historical 8 MiB cap so
-	// a stale deployment env cannot silently reserve hundreds of MiB per upload.
-	const maxChunkSize = 8 << 20
+	// Every worker holds one chunk in memory. Cap stale deployments so a
+	// leftover 200 MiB value cannot reserve hundreds of MiB per upload.
+	const maxChunkSize = 32 << 20
 	if cfg.ChunkSize > maxChunkSize {
 		cfg.ChunkSize = maxChunkSize
 	}
