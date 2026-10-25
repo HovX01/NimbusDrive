@@ -158,6 +158,8 @@ func (s *Server) Router() http.Handler {
 				r.Post("/s3/buckets", s.createS3Bucket)
 				r.Get("/s3/buckets/{bucket}", s.listS3BucketObjects)
 				r.Post("/backups", s.startBackup)
+				r.Post("/backups/telegram", s.startTelegramBackup)
+				r.Get("/backups/telegram", s.listTelegramBackups)
 				r.Get("/backups/{jobID}", s.backupStatus)
 				r.Get("/auth/me", s.me)
 				r.Get("/auth/avatar", s.avatar)

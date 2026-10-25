@@ -10,9 +10,10 @@ import (
 	"syscall"
 	"time"
 
-		"github.com/vrc/nimbus/internal/app"
+	"github.com/vrc/nimbus/internal/app"
 	"github.com/vrc/nimbus/internal/backup"
 	"github.com/vrc/nimbus/internal/config"
+	"github.com/vrc/nimbus/internal/dbbackup"
 	"github.com/vrc/nimbus/internal/domain"
 	httpserver "github.com/vrc/nimbus/internal/http"
 	"github.com/vrc/nimbus/internal/s3gw"
@@ -36,7 +37,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-		tg := telegram.New(cfg.TelegramAPIID, cfg.TelegramAPIHash, cfg.DataDir)
+	tg := telegram.New(cfg.TelegramAPIID, cfg.TelegramAPIHash, cfg.DataDir)
 
 	var blobs domain.BlobStore = tg
 	if cfg.TelegramBotAPIURL != "" {
@@ -75,7 +76,7 @@ func main() {
 		BotGrants:     store,
 		Social:        store,
 		SocialApp:     store,
-				Blobs:         blobs,
+		Blobs:         blobs,
 		TG:            tg,
 		Messenger:     tg,
 		Setup:         tg,
@@ -83,10 +84,14 @@ func main() {
 		JWTTTL:        time.Duration(cfg.JWTTTLHours) * time.Hour,
 		ChunkSize:     cfg.ChunkSize,
 		DataDir:       cfg.DataDir,
-UploadWorkers: 3,
+		UploadWorkers: cfg.UploadWorkers,
 	}
 	backupSvc := backup.NewService(cfg.DataDir, store, svc, store)
 	svc.Backup = backupSvc
+	if cfg.DBBackupEnabled {
+		svc.DBBackup = dbbackup.NewService(cfg.DataDir, store, blobs, cfg.DBBackupPrefix, cfg.DBBackupKeep)
+		log.Printf("telegram database backup enabled (prefix %s, keep %d)", cfg.DBBackupPrefix, cfg.DBBackupKeep)
+	}
 	svc.ConfigureSocialOAuth(app.SocialOAuthConfig{
 		PublicBaseURL:   cfg.PublicBaseURL,
 		TikTokClientKey: cfg.TikTokClientKey,

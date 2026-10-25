@@ -69,6 +69,8 @@ Full reference: **[docs/API.md](docs/API.md)** · Browser: open **[docs/index.ht
 | DELETE | `/api/v1/data/{collection}/{id}` | Delete row |
 | GET | `/api/v1/data/collections` | List collection names |
 | DELETE | `/api/v1/files/{id}` | Move file/folder to trash |
+| POST | `/api/v1/backups/telegram` | Snapshot DB and upload to Telegram |
+| GET | `/api/v1/backups/telegram` | List indexed DB backups |
 | GET | `/health` | Health check |
 
 ### Storage API (for your apps)
@@ -84,6 +86,18 @@ Supports bucket create/list/head/delete, object put/get/head/delete/copy, bulk d
 This is a Telegram-backed S3 gateway. AWS management APIs (ACLs, policies, versioning, lifecycle, tagging, and similar subresources) return `NotImplemented`. Keys follow drive name/path rules: 255 characters per segment, no empty intermediate segments or backslashes, and files cannot share a name with a folder. Unfinished multipart uploads expire on restart. Deleted/replaced objects enter drive trash.
 
 Run `go test ./internal/s3gw ./internal/app ./internal/store/sqlite` for gateway/storage checks. Set `NIMBUS_TEST_RUSTIC` to a Rustic executable to include local backup, S3 replication, byte-for-byte restore, integrity checks, and pruning.
+
+### Database backup to Telegram
+
+Nimbus can snapshot its SQLite metadata and upload it to the Telegram storage channel as a clearly named document. Filenames use `<prefix>-<UTC timestamp>-<random>.sqlite` (default prefix `nimbus-db-backup`), and the caption includes the timestamp, size, and SHA-256. Trigger it from a Coolify scheduled task or cron:
+
+```bash
+curl -fsS -X POST "https://your-host/api/v1/backups/telegram" \
+  -H "X-Nimbus-Access: $NIMBUS_ACCESS_SECRET" \
+  -H "X-Nimbus-Key: $NIMBUS_API_KEY"
+```
+
+The response includes the backup name, Telegram message ID, size, and SHA-256. `GET /api/v1/backups/telegram` lists locally indexed backups. Set `NIMBUS_DB_BACKUP_ENABLED=false` to disable, `NIMBUS_DB_BACKUP_PREFIX` to change the searchable name prefix, and `NIMBUS_DB_BACKUP_KEEP` to retain only the newest N backups (0 keeps all). To restore, stop Nimbus, replace `/data/nimbus.db` with the downloaded `.sqlite` snapshot, remove stale `nimbus.db-wal` / `nimbus.db-shm` files, and restart.
 
 ### Media fetch engine
 

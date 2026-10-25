@@ -461,7 +461,19 @@ func (c *Client) EnsureStorageChannel(ctx context.Context) (int64, error) {
 	return ch.ID, nil
 }
 
-func (c *Client) UploadPart(ctx context.Context, channelID int64, partNo int, name string, r io.Reader, size int64) (int, error) {
+func (c *Client) UploadPart(ctx context.Context, channelID int64, r io.Reader, size int64) (int, error) {
+	name, err := chunkObjectName()
+	if err != nil {
+		return 0, err
+	}
+	return c.UploadDocument(ctx, channelID, name, "", r, size)
+}
+
+func (c *Client) UploadDocument(ctx context.Context, channelID int64, name, caption string, r io.Reader, size int64) (int, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, fmt.Errorf("%w: document name is required", domain.ErrValidation)
+	}
 	api, err := c.waitAPI(ctx)
 	if err != nil {
 		return 0, err
@@ -471,22 +483,25 @@ func (c *Client) UploadPart(ctx context.Context, channelID int64, partNo int, na
 		return 0, err
 	}
 	up := uploader.NewUploader(api).WithPartSize(uploader.MaximumPartSize)
-	file, err := up.Upload(ctx, uploader.NewUpload(fmt.Sprintf("%s.part%04d", name, partNo), r, size))
+	file, err := up.Upload(ctx, uploader.NewUpload(name, r, size))
 	if err != nil {
 		return 0, err
 	}
-	updates, err := api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+	req := &tg.MessagesSendMediaRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: ch.ChannelID, AccessHash: ch.AccessHash},
 		Media: &tg.InputMediaUploadedDocument{
 			File:     file,
 			MimeType: "application/octet-stream",
 			Attributes: []tg.DocumentAttributeClass{
-				&tg.DocumentAttributeFilename{FileName: fmt.Sprintf("%s.part%04d", name, partNo)},
+				&tg.DocumentAttributeFilename{FileName: name},
 			},
 		},
-		Message:  fmt.Sprintf("nimbus-part:%d", partNo),
 		RandomID: newRandomID(),
-	})
+	}
+	if caption != "" {
+		req.Message = caption
+	}
+	updates, err := api.MessagesSendMedia(ctx, req)
 	if err != nil {
 		return 0, err
 	}
@@ -662,7 +677,7 @@ func documentFromMessages(msgs tg.MessagesMessagesClass) (*tg.Document, error) {
 }
 
 var (
-	_ domain.BlobStore        = (*Client)(nil)
-	_ domain.TelegramAuth     = (*Client)(nil)
+	_ domain.BlobStore         = (*Client)(nil)
+	_ domain.TelegramAuth      = (*Client)(nil)
 	_ domain.TelegramMessenger = (*Client)(nil)
 )

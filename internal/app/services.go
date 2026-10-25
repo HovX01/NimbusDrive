@@ -20,6 +20,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/vrc/nimbus/internal/backup"
+	"github.com/vrc/nimbus/internal/dbbackup"
 	"github.com/vrc/nimbus/internal/domain"
 	"golang.org/x/sync/errgroup"
 )
@@ -44,6 +45,7 @@ type Services struct {
 	// UploadWorkers caps parallel Telegram part uploads (enterprise-style pipeline).
 	UploadWorkers int
 	Backup        *backup.Service
+	DBBackup      *dbbackup.Service
 
 	fetchOnce sync.Once
 	fetchJobs *fetchHub
@@ -315,11 +317,11 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 
 	chunkSize := s.ChunkSize
 	if chunkSize <= 0 {
-		chunkSize = 8 << 20
+		chunkSize = 200 << 20
 	}
 	workers := s.UploadWorkers
 	if workers <= 0 {
-		workers = 3
+		workers = 2
 	}
 
 	finalParts, finalTotal, streamedHash, err := s.uploadParts(ctx, channelID, node.ID, reader, chunkSize, workers, contentHash == "")
@@ -400,7 +402,7 @@ loop:
 
 			g.Go(func() error {
 				defer func() { <-sem }()
-				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, pn, nodeID, bytes.NewReader(chunk), int64(len(chunk)))
+				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, bytes.NewReader(chunk), int64(len(chunk)))
 				if upErr != nil {
 					return upErr
 				}

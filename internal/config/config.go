@@ -13,59 +13,67 @@ import (
 )
 
 type Config struct {
-	Port                string
-	DataDir             string
-	WebDir              string
-	DatabaseURL         string
-	JWTSecret           string
-	AccessSecret        string
-	APIKey              string
-	Public              bool
-	JWTTTLHours         int
-	TelegramAPIID       int
-	TelegramAPIHash     string
-	TelegramBotAPIURL   string
-	TelegramBotToken    string
+	Port                  string
+	DataDir               string
+	WebDir                string
+	DatabaseURL           string
+	JWTSecret             string
+	AccessSecret          string
+	APIKey                string
+	Public                bool
+	JWTTTLHours           int
+	TelegramAPIID         int
+	TelegramAPIHash       string
+	TelegramBotAPIURL     string
+	TelegramBotToken      string
 	TelegramStorageChatID string
-	ChunkSize           int
-	CORSOrigins         []string
-	PublicBaseURL       string
-	TikTokClientKey     string
-	TikTokSecret        string
-	MetaAppID           string
-	MetaAppSecret       string
-	S3Enabled           bool
-	S3Port              string
-	S3Region            string
+	ChunkSize             int
+	UploadWorkers         int
+	DBBackupEnabled       bool
+	DBBackupPrefix        string
+	DBBackupKeep          int
+	CORSOrigins           []string
+	PublicBaseURL         string
+	TikTokClientKey       string
+	TikTokSecret          string
+	MetaAppID             string
+	MetaAppSecret         string
+	S3Enabled             bool
+	S3Port                string
+	S3Region              string
 }
 
 func Load() (Config, error) {
 	_ = godotenv.Load()
 
 	cfg := Config{
-		Port:            getenv("PORT", "8080"),
-		DataDir:         getenv("DATA_DIR", "./data"),
-		WebDir:          strings.TrimSpace(os.Getenv("WEB_DIR")),
-		DatabaseURL:     getenv("DATABASE_URL", "sqlite://./data/nimbus.db"),
-		JWTSecret:       os.Getenv("JWT_SECRET"),
-		AccessSecret:    strings.TrimSpace(os.Getenv("NIMBUS_ACCESS_SECRET")),
-		APIKey:          strings.TrimSpace(os.Getenv("NIMBUS_API_KEY")),
-		Public:          getenvBool("NIMBUS_PUBLIC", false),
-		JWTTTLHours:     getenvInt("JWT_TTL_HOURS", 72),
-		TelegramAPIHash:     strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
-		TelegramBotAPIURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_API_URL")), "/"),
-		TelegramBotToken:    strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		Port:                  getenv("PORT", "8080"),
+		DataDir:               getenv("DATA_DIR", "./data"),
+		WebDir:                strings.TrimSpace(os.Getenv("WEB_DIR")),
+		DatabaseURL:           getenv("DATABASE_URL", "sqlite://./data/nimbus.db"),
+		JWTSecret:             os.Getenv("JWT_SECRET"),
+		AccessSecret:          strings.TrimSpace(os.Getenv("NIMBUS_ACCESS_SECRET")),
+		APIKey:                strings.TrimSpace(os.Getenv("NIMBUS_API_KEY")),
+		Public:                getenvBool("NIMBUS_PUBLIC", false),
+		JWTTTLHours:           getenvInt("JWT_TTL_HOURS", 72),
+		TelegramAPIHash:       strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
+		TelegramBotAPIURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_API_URL")), "/"),
+		TelegramBotToken:      strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramStorageChatID: strings.TrimSpace(os.Getenv("TELEGRAM_STORAGE_CHAT_ID")),
-		ChunkSize:           getenvInt("CHUNK_SIZE", 8*1024*1024),
-		CORSOrigins:     splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
-		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("NIMBUS_PUBLIC_BASE_URL")), "/"),
-		TikTokClientKey: strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_KEY")),
-		TikTokSecret:    strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_SECRET")),
-		MetaAppID:       strings.TrimSpace(os.Getenv("META_APP_ID")),
-		MetaAppSecret:   strings.TrimSpace(os.Getenv("META_APP_SECRET")),
-		S3Enabled:       getenvBool("NIMBUS_S3_ENABLED", false),
-		S3Port:          getenv("NIMBUS_S3_PORT", "9091"),
-		S3Region:        strings.TrimSpace(os.Getenv("NIMBUS_S3_REGION")),
+		ChunkSize:             getenvInt("CHUNK_SIZE", 200*1024*1024),
+		UploadWorkers:         getenvInt("UPLOAD_WORKERS", 2),
+		DBBackupEnabled:       getenvBool("NIMBUS_DB_BACKUP_ENABLED", true),
+		DBBackupPrefix:        getenv("NIMBUS_DB_BACKUP_PREFIX", "nimbus-db-backup"),
+		DBBackupKeep:          getenvInt("NIMBUS_DB_BACKUP_KEEP", 0),
+		CORSOrigins:           splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
+		PublicBaseURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("NIMBUS_PUBLIC_BASE_URL")), "/"),
+		TikTokClientKey:       strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_KEY")),
+		TikTokSecret:          strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_SECRET")),
+		MetaAppID:             strings.TrimSpace(os.Getenv("META_APP_ID")),
+		MetaAppSecret:         strings.TrimSpace(os.Getenv("META_APP_SECRET")),
+		S3Enabled:             getenvBool("NIMBUS_S3_ENABLED", false),
+		S3Port:                getenv("NIMBUS_S3_PORT", "9091"),
+		S3Region:              strings.TrimSpace(os.Getenv("NIMBUS_S3_REGION")),
 	}
 
 	if id := strings.TrimSpace(os.Getenv("TELEGRAM_API_ID")); id != "" {
@@ -107,8 +115,17 @@ func Load() (Config, error) {
 		cfg.APIKey = secret
 	}
 
-		if cfg.ChunkSize < 64*1024 {
+	if cfg.ChunkSize < 64*1024 {
 		return Config{}, fmt.Errorf("CHUNK_SIZE must be at least 64KiB")
+	}
+	if cfg.UploadWorkers < 1 {
+		cfg.UploadWorkers = 1
+	}
+	if cfg.UploadWorkers > 8 {
+		cfg.UploadWorkers = 8
+	}
+	if cfg.DBBackupKeep < 0 {
+		cfg.DBBackupKeep = 0
 	}
 
 	if cfg.TelegramBotAPIURL != "" {

@@ -14,10 +14,10 @@ import (
 )
 
 type BotAPIClient struct {
-	apiURL   string
-	token    string
-	chatID   string
-	http     *http.Client
+	apiURL string
+	token  string
+	chatID string
+	http   *http.Client
 }
 
 func NewBotAPI(apiURL, token, chatID string) *BotAPIClient {
@@ -83,19 +83,31 @@ func (b *BotAPIClient) EnsureStorageChannel(ctx context.Context) (int64, error) 
 	return chat.ID, nil
 }
 
-func (b *BotAPIClient) UploadPart(ctx context.Context, channelID int64, partNo int, name string, r io.Reader, size int64) (int, error) {
+func (b *BotAPIClient) UploadPart(ctx context.Context, channelID int64, r io.Reader, size int64) (int, error) {
+	name, err := chunkObjectName()
+	if err != nil {
+		return 0, err
+	}
+	return b.UploadDocument(ctx, channelID, name, "", r, size)
+}
+
+func (b *BotAPIClient) UploadDocument(ctx context.Context, channelID int64, name, caption string, r io.Reader, size int64) (int, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, fmt.Errorf("%w: document name is required", domain.ErrValidation)
+	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
 	if err := w.WriteField("chat_id", b.chatID); err != nil {
 		return 0, err
 	}
-	if err := w.WriteField("caption", fmt.Sprintf("nimbus-part:%d", partNo)); err != nil {
-		return 0, err
+	if caption != "" {
+		if err := w.WriteField("caption", caption); err != nil {
+			return 0, err
+		}
 	}
-
-	filename := fmt.Sprintf("%s.part%04d", name, partNo)
-	part, err := w.CreateFormFile("document", filename)
+	part, err := w.CreateFormFile("document", name)
 	if err != nil {
 		return 0, err
 	}

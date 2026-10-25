@@ -332,6 +332,40 @@ DELETE /api/v1/trash         (empty trash)
 
 ---
 
+## Database backups
+
+Snapshot `/data/nimbus.db` and upload it to the Telegram storage channel as a named `.sqlite` document:
+
+```http
+POST /api/v1/backups/telegram
+X-Nimbus-Access: <access-secret>
+X-Nimbus-Key: <api-key>
+```
+
+```bash
+curl -fsS -X POST "https://your-host/api/v1/backups/telegram" \
+  -H "X-Nimbus-Access: $NIMBUS_ACCESS_SECRET" \
+  -H "X-Nimbus-Key: $NIMBUS_API_KEY"
+```
+
+Response:
+
+```json
+{
+  "status": "uploaded",
+  "name": "nimbus-db-backup-20261025T143000Z-a1b2c3d4.sqlite",
+  "message_id": 12345,
+  "channel_id": -1001234567890,
+  "size": 262144,
+  "sha256": "…",
+  "created_at": "2026-10-25T14:30:00Z"
+}
+```
+
+`GET /api/v1/backups/telegram` lists locally indexed backups. Set `NIMBUS_DB_BACKUP_KEEP` to prune older backups (`0` keeps all). Restore by stopping Nimbus, replacing `/data/nimbus.db` with the downloaded snapshot, removing stale `nimbus.db-wal` / `nimbus.db-shm` files, and restarting.
+
+---
+
 ## Auth & setup (Telegram)
 
 | Method | Path | Description |
