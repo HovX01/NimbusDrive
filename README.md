@@ -118,7 +118,7 @@ Use **Settings → Backup → Import old database** to merge a `.sqlite` snapsho
 - File parts and hashes are remapped to the imported file IDs.
 - Shares, editor projects, data rows, bot grants, social accounts and OAuth configs are imported only when they do not already exist.
 
-The snapshot holds metadata and Telegram message references, not file bytes. Imported files open only while their original Telegram channel and messages remain available.
+A pre-import safety copy of the current database is written to `/data/import-backups` before the merge. To roll back, stop Nimbus, copy the pre-import file over `/data/nimbus.db`, remove `/data/nimbus.db-wal` and `/data/nimbus.db-shm` if present, then restart. The uploaded snapshot holds metadata and Telegram message references, not file bytes. Imported files open only while their original Telegram channel and messages remain available.
 
 The same merge is available over HTTP:
 

@@ -37,6 +37,7 @@ import { Textarea } from "./ui/textarea";
 
 type Props = {
   token: string;
+  onDatabaseImported?: () => void;
 };
 
 const providerOrder: SocialProvider[] = ["tiktok", "instagram", "facebook"];
@@ -54,7 +55,7 @@ function providerLabel(provider: SocialProvider) {
   }
 }
 
-export function SettingsPage({ token }: Props) {
+export function SettingsPage({ token, onDatabaseImported }: Props) {
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
   const [bots, setBots] = useState<TelegramBot[]>([]);
@@ -301,6 +302,7 @@ export function SettingsPage({ token }: Props) {
         `Merged ${result.files_imported} files, ${result.folders_created} folders and ${result.parts_imported} parts.`,
       );
       setImportFile(null);
+      onDatabaseImported?.();
     } catch (e) {
       setImportError((e as Error).message);
     } finally {

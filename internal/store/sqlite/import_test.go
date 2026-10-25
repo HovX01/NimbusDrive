@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -71,7 +72,9 @@ VALUES ('src-keep','root','keep.txt','file','text/plain',3,'ready',7,?,?)`, now,
 	execSrc(`INSERT INTO share_links (id,token,node_id,created_at,expires_at,revoked_at,download_count)
 VALUES ('share-old','tok-old','src-old-file',?,NULL,NULL,2)`, now)
 	execSrc(`INSERT INTO edit_projects (id,source_node_id,name,timeline_json,created_at,updated_at)
-VALUES ('project-old','src-old-file','Old edit','{}',?,?)`, now, now)
+VALUES ('project-old','src-old-file','Old edit','{"tracks":[{"clips":[{"sourceNodeId":"src-old-file"}]}]}',?,?)`, now, now)
+	execSrc(`INSERT INTO edit_projects (id,source_node_id,name,timeline_json,created_at,updated_at)
+VALUES ('project-dup','src-dup','Duplicate edit','{"tracks":[{"clips":[{"sourceNodeId":"src-dup"}]}]}',?,?)`, now, now)
 	execSrc(`INSERT INTO data_rows (id,collection,data,created_at,updated_at) VALUES ('row-old','notes','{"text":"hello"}',?,?)`, now, now)
 	execSrc(`INSERT INTO bot_grants (bot_id,allowed,updated_at) VALUES ('123',1,?)`, now)
 	execSrc(`INSERT INTO social_connections (id,provider,account_id,account_key,auth_type,display_name,username,scopes,access_token,refresh_token,cookie_path,enabled,active,expires_at,updated_at)
@@ -90,7 +93,7 @@ VALUES ('social-old','tiktok','acct','key','oauth','Old','olduser','user.info','
 	if summary.FilesImported != 2 || summary.FilesSkipped != 1 || summary.FilesRenamed != 1 {
 		t.Fatalf("files summary = %+v", summary)
 	}
-	if summary.PartsImported != 3 || summary.SharesImported != 1 || summary.EditProjectsImported != 1 {
+	if summary.PartsImported != 3 || summary.SharesImported != 1 || summary.EditProjectsImported != 2 {
 		t.Fatalf("related summary = %+v", summary)
 	}
 	if summary.DataRowsImported != 1 || summary.BotGrantsImported != 1 || summary.SocialConnectionsAdded != 1 {
@@ -138,6 +141,13 @@ VALUES ('social-old','tiktok','acct','key','oauth','Old','olduser','user.info','
 	}
 	if dupCount != 0 {
 		t.Fatalf("duplicate file was imported")
+	}
+	var timeline string
+	if err := target.db.QueryRowContext(ctx, `SELECT timeline_json FROM edit_projects WHERE id='project-dup'`).Scan(&timeline); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(timeline, `"sourceNodeId":"existing-dup"`) {
+		t.Fatalf("timeline was not remapped: %s", timeline)
 	}
 
 	second, err := target.MergeDatabase(ctx, sourcePath)

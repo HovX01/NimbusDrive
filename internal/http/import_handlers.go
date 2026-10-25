@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/vrc/nimbus/internal/domain"
 )
@@ -54,6 +55,17 @@ func (s *Server) importDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := tmp.Close(); err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	snapshotDir := filepath.Join(s.svc.DataDir, "import-backups")
+	if err := os.MkdirAll(snapshotDir, 0o700); err != nil {
+		writeErr(w, err)
+		return
+	}
+	snapshotPath := filepath.Join(snapshotDir, "pre-import-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".sqlite")
+	if err := s.svc.DBImport.SnapshotToFile(r.Context(), snapshotPath); err != nil {
+		writeErr(w, fmt.Errorf("create pre-import safety copy: %w", err))
 		return
 	}
 

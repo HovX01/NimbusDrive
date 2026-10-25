@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/vrc/nimbus/internal/app"
@@ -15,9 +16,15 @@ import (
 )
 
 type fakeDatabaseImporter struct {
-	got   []byte
-	count domain.ImportSummary
-	err   error
+	got      []byte
+	snapshot string
+	count    domain.ImportSummary
+	err      error
+}
+
+func (f *fakeDatabaseImporter) SnapshotToFile(_ context.Context, path string) error {
+	f.snapshot = path
+	return nil
 }
 
 func (f *fakeDatabaseImporter) MergeDatabase(_ context.Context, path string) (domain.ImportSummary, error) {
@@ -52,6 +59,9 @@ func TestImportDatabaseUpload(t *testing.T) {
 	}
 	if string(fake.got) != "sqlite bytes" {
 		t.Fatalf("import bytes = %q", fake.got)
+	}
+	if fake.snapshot == "" || filepath.Ext(fake.snapshot) != ".sqlite" {
+		t.Fatalf("snapshot path = %q", fake.snapshot)
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"files_imported":2`)) {
 		t.Fatalf("response = %s", rec.Body.String())

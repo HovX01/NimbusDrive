@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -514,7 +515,7 @@ FROM edit_projects`)
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO edit_projects (id, source_node_id, name, timeline_json, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)`, id, mapped, name, timeline, created, updated); err != nil {
+VALUES (?, ?, ?, ?, ?, ?)`, id, mapped, name, remapTimelineIDs(timeline, idMap), created, updated); err != nil {
 			return err
 		}
 		summary.EditProjectsImported++
@@ -674,6 +675,40 @@ VALUES (?, ?, ?, ?, ?)`, provider, clientID, clientSecret, baseURL, updated)
 		}
 	}
 	return rows.Err()
+}
+
+func remapTimelineIDs(raw string, idMap map[string]string) string {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return raw
+	}
+	remapNodeRefs(value, idMap)
+	out, err := json.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
+func remapNodeRefs(value any, idMap map[string]string) {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			if key == "sourceNodeId" || key == "source_node_id" {
+				if id, ok := item.(string); ok {
+					if mapped, found := idMap[id]; found {
+						v[key] = mapped
+					}
+				}
+				continue
+			}
+			remapNodeRefs(item, idMap)
+		}
+	case []any:
+		for _, item := range v {
+			remapNodeRefs(item, idMap)
+		}
+	}
 }
 
 func importRowIDExists(ctx context.Context, tx *sql.Tx, table, id string) bool {

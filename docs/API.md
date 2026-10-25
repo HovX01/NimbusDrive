@@ -409,7 +409,7 @@ Folders merge by name at the same path. Files with an existing content hash are 
 }
 ```
 
-The snapshot references Telegram messages but does not contain file bytes. Imported files remain readable only while the original channel and messages are accessible.
+A pre-import safety copy of the live database is written to `/data/import-backups` before the merge. The uploaded snapshot references Telegram messages but does not contain file bytes. Imported files remain readable only while the original channel and messages are accessible.
 
 ---
 

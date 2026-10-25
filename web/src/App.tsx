@@ -895,6 +895,7 @@ export default function App() {
             setError((e as Error).message);
           }
         }}
+        onDatabaseImported={() => setFilesVersion((v) => v + 1)}
         onLogout={onLogout}
         onClearError={() => setError("")}
         sharedFetchUrl={sharedFetchUrl}

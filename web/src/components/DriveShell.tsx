@@ -104,6 +104,7 @@ type Props = {
   onShare: (id: string, name: string) => void;
   onSendTelegram: (id: string, name: string) => void;
   onRefresh: () => void | Promise<void>;
+  onDatabaseImported?: () => void;
   onLogout: () => void;
   onClearError: () => void;
   sharedFetchUrl?: string | null;
@@ -147,6 +148,7 @@ export function DriveShell(props: Props) {
     onShare,
     onSendTelegram,
     onRefresh,
+    onDatabaseImported,
     onLogout,
     onClearError,
     sharedFetchUrl,
@@ -588,7 +590,7 @@ export function DriveShell(props: Props) {
           </div>
           <HeaderLeadingContext.Provider value={sidebarToggle}>
           {section === "settings" ? (
-            <SettingsPage token={token} />
+            <SettingsPage token={token} onDatabaseImported={onDatabaseImported} />
           ) : section === "buckets" ? (
             <S3BucketsPage token={token} />
           ) : section === "dashboard" ? (
