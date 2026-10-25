@@ -25,7 +25,7 @@ func runBackupCommand(ctx context.Context) error {
 	if base == "" {
 		base = "http://127.0.0.1:" + cfg.Port
 	}
-	body, err := requestBackup(ctx, base, cfg.AccessSecret, cfg.APIKey)
+	body, err := requestBackup(ctx, base, cfg.BackupSecret)
 	if err != nil {
 		return err
 	}
@@ -38,17 +38,12 @@ func runBackupCommand(ctx context.Context) error {
 	return nil
 }
 
-func requestBackup(ctx context.Context, base, accessSecret, apiKey string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/api/v1/backups/telegram", nil)
+func requestBackup(ctx context.Context, base, backupSecret string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/api/v1/backups/telegram/local", nil)
 	if err != nil {
 		return nil, err
 	}
-	if accessSecret != "" {
-		req.Header.Set("X-Nimbus-Access", accessSecret)
-	}
-	if apiKey != "" {
-		req.Header.Set("X-Nimbus-Key", apiKey)
-	}
+	req.Header.Set("X-Nimbus-Backup", backupSecret)
 	client := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {

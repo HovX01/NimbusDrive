@@ -32,6 +32,7 @@ type Config struct {
 	DBBackupEnabled       bool
 	DBBackupPrefix        string
 	DBBackupKeep          int
+	BackupSecret          string
 	CORSOrigins           []string
 	PublicBaseURL         string
 	TikTokClientKey       string
@@ -65,6 +66,7 @@ func Load() (Config, error) {
 		DBBackupEnabled:       getenvBool("NIMBUS_DB_BACKUP_ENABLED", true),
 		DBBackupPrefix:        getenv("NIMBUS_DB_BACKUP_PREFIX", "nimbus-db-backup"),
 		DBBackupKeep:          getenvInt("NIMBUS_DB_BACKUP_KEEP", 0),
+		BackupSecret:          strings.TrimSpace(os.Getenv("NIMBUS_BACKUP_SECRET")),
 		CORSOrigins:           splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
 		PublicBaseURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("NIMBUS_PUBLIC_BASE_URL")), "/"),
 		TikTokClientKey:       strings.TrimSpace(os.Getenv("TIKTOK_CLIENT_KEY")),
@@ -113,6 +115,16 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.APIKey = secret
+	}
+
+	// Local backup command secret: lets `nimbus backup` trigger the running
+	// server over loopback without needing the access key or API key.
+	if cfg.BackupSecret == "" {
+		secret, err := loadOrCreateSecretFile(cfg.DataDir, "backup.secret")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.BackupSecret = secret
 	}
 
 	if cfg.ChunkSize < 64*1024 {

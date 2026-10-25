@@ -94,6 +94,7 @@ func main() {
 		ChunkSize:     cfg.ChunkSize,
 		DataDir:       cfg.DataDir,
 		UploadWorkers: cfg.UploadWorkers,
+		BackupSecret:  cfg.BackupSecret,
 	}
 	backupSvc := backup.NewService(cfg.DataDir, store, svc, store)
 	svc.Backup = backupSvc

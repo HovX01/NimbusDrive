@@ -13,21 +13,19 @@ func TestRequestBackup(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/backups/telegram" {
+		if r.URL.Path != "/api/v1/backups/telegram/local" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		if r.Header.Get("X-Nimbus-Access") != "access" {
-			t.Errorf("access header = %q", r.Header.Get("X-Nimbus-Access"))
+		if r.Header.Get("X-Nimbus-Backup") != "backup-secret" {
+			t.Errorf("backup header = %q", r.Header.Get("X-Nimbus-Backup"))
 		}
-		if r.Header.Get("X-Nimbus-Key") != "key" {
-			t.Errorf("api key header = %q", r.Header.Get("X-Nimbus-Key"))
-		}
+
 		w.WriteHeader(http.StatusCreated)
 		_, _ = fmt.Fprint(w, `{"status":"uploaded","name":"nimbus-db-backup-test.sqlite"}`)
 	}))
 	defer srv.Close()
 
-	body, err := requestBackup(context.Background(), srv.URL, "access", "key")
+	body, err := requestBackup(context.Background(), srv.URL, "backup-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +40,7 @@ func TestRequestBackupSurfacesFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := requestBackup(context.Background(), srv.URL, "", ""); err == nil {
+	if _, err := requestBackup(context.Background(), srv.URL, ""); err == nil {
 		t.Fatal("expected an error")
 	}
 }

@@ -91,13 +91,13 @@ Run `go test ./internal/s3gw ./internal/app ./internal/store/sqlite` for gateway
 
 Nimbus can snapshot its SQLite metadata and upload it to the Telegram storage channel as a clearly named document. Filenames use `<prefix>-<UTC timestamp>-<random>.sqlite` (default prefix `nimbus-db-backup`), and the caption includes the timestamp, size, and SHA-256.
 
-The simplest trigger is the built-in command. It uses the running server over loopback and reads the existing access/API secrets automatically, so there are no headers or auth values to configure:
+The simplest trigger is the built-in command. It calls the running server over loopback, so a task in the Nimbus container needs no token or auth values:
 
 ```bash
 /app/nimbus backup
 ```
 
-Use that as the Coolify scheduled task command. For an external trigger, the HTTP endpoint is also available:
+Use that as the Coolify scheduled task command. For a task in a separate container, set `NIMBUS_BACKUP_URL` and `NIMBUS_BACKUP_SECRET` (the value in `/data/backup.secret`). For an external trigger, the authenticated HTTP endpoint is also available:
 
 ```bash
 curl -fsS -X POST "https://your-host/api/v1/backups/telegram" \

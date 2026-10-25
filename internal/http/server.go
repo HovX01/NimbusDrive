@@ -81,6 +81,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/share/{token}/download", s.shareDownload)
 		r.Get("/setup/status", s.setupStatus)
 		r.Get("/social/oauth/{provider}/callback", s.socialOAuthCallback)
+		r.Post("/backups/telegram/local", s.localTelegramBackup)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.accessRequired)

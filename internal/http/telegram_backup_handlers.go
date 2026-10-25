@@ -2,10 +2,33 @@ package httpserver
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/vrc/nimbus/internal/domain"
 )
+
+func (s *Server) localTelegramBackup(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackBackupRequest(r) && !secureEqual(s.svc.BackupSecret, r.Header.Get("X-Nimbus-Backup")) {
+		writeErr(w, domain.ErrUnauthorized)
+		return
+	}
+	s.startTelegramBackup(w, r)
+}
+
+// isLoopbackBackupRequest accepts a direct localhost call from `nimbus backup`.
+// Proxied requests carry forwarding headers and must present the backup secret.
+func isLoopbackBackupRequest(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 func (s *Server) startTelegramBackup(w http.ResponseWriter, r *http.Request) {
 	if s.svc.DBBackup == nil {
