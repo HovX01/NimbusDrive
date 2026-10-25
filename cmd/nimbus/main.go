@@ -22,6 +22,15 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := runBackupCommand(ctx); err != nil {
+			log.Fatalf("backup: %v", err)
+		}
+		return
+	}
+
 	log.Println("nimbus starting…")
 	cfg, err := config.Load()
 	if err != nil {

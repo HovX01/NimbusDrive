@@ -334,7 +334,15 @@ DELETE /api/v1/trash         (empty trash)
 
 ## Database backups
 
-Snapshot `/data/nimbus.db` and upload it to the Telegram storage channel as a named `.sqlite` document:
+Snapshot `/data/nimbus.db` and upload it to the Telegram storage channel as a named `.sqlite` document.
+
+For Coolify, run the built-in command. It uses the running server over loopback and reads the existing secrets automatically:
+
+```bash
+/app/nimbus backup
+```
+
+For an external trigger:
 
 ```http
 POST /api/v1/backups/telegram
