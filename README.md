@@ -85,6 +85,10 @@ Supports bucket create/list/head/delete, object put/get/head/delete/copy, bulk d
 
 This is a Telegram-backed S3 gateway. AWS management APIs (ACLs, policies, versioning, lifecycle, tagging, and similar subresources) return `NotImplemented`. Keys follow drive name/path rules: 255 characters per segment, no empty intermediate segments or backslashes, and files cannot share a name with a folder. Unfinished multipart uploads expire on restart. Deleted/replaced objects enter drive trash.
 
+S3 backups share two chunk-upload slots per Nimbus process, with one chunk per file at a time and upload starts spaced at least one second apart. Explicit Telegram flood waits and Bot API `retry_after` responses pause all S3 uploads; the affected chunk gets up to five attempts. Queued chunks wait before allocating their upload buffers. `CHUNK_SIZE` still applies (up to 50 MiB); `UPLOAD_WORKERS` continues to control web uploads. S3 completion waits for Telegram storage, so configure the S3 client and reverse proxy timeouts for the total backup time, including queueing and rate-limit waits. Multiple Nimbus replicas using one Telegram account do not share these limits.
+
+For 50 MiB chunks, set `CHUNK_SIZE=52428800` and `UPLOAD_WORKERS=3` in the Nimbus Coolify service. If `TELEGRAM_BOT_CHUNK_SIZE` is set for the Bot API backend, set it to `52428800` too, since it overrides `CHUNK_SIZE`. Redeploy Nimbus to apply environment changes.
+
 Run `go test ./internal/s3gw ./internal/app ./internal/store/sqlite` for gateway/storage checks. Set `NIMBUS_TEST_RUSTIC` to a Rustic executable to include local backup, S3 replication, byte-for-byte restore, integrity checks, and pruning.
 
 ### Database backup to Telegram

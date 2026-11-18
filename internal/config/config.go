@@ -150,7 +150,7 @@ func Load() (Config, error) {
 
 	// Every worker holds one chunk in memory. Cap stale deployments so a
 	// leftover 200 MiB value cannot reserve hundreds of MiB per upload.
-	const maxChunkSize = 32 << 20
+	const maxChunkSize = 50 << 20
 	if cfg.ChunkSize > maxChunkSize {
 		cfg.ChunkSize = maxChunkSize
 	}

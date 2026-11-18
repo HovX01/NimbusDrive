@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vrc/nimbus/internal/domain"
 )
@@ -38,8 +39,13 @@ func (b *BotAPIClient) fileURL(filePath string) string {
 }
 
 type botResponse struct {
-	OK     bool            `json:"ok"`
-	Result json.RawMessage `json:"result"`
+	OK          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result"`
+	ErrorCode   int             `json:"error_code"`
+	Description string          `json:"description"`
+	Parameters  struct {
+		RetryAfter int `json:"retry_after"`
+	} `json:"parameters"`
 }
 
 type botChat struct {
@@ -122,7 +128,11 @@ func (b *BotAPIClient) UploadPart(ctx context.Context, channelID int64, partNo i
 		return 0, fmt.Errorf("bot api decode: %w", err)
 	}
 	if !result.OK {
-		return 0, fmt.Errorf("bot api sendDocument failed")
+		err := fmt.Errorf("bot api sendDocument failed (%d): %s", result.ErrorCode, result.Description)
+		if result.ErrorCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusTooManyRequests {
+			return 0, &domain.RateLimitError{Err: err, RetryAfter: time.Duration(result.Parameters.RetryAfter) * time.Second}
+		}
+		return 0, err
 	}
 
 	var msg botMessage

@@ -42,12 +42,13 @@ type Services struct {
 	JWTTTL    time.Duration
 	ChunkSize int
 	DataDir   string
-	// UploadWorkers caps parallel Telegram part uploads (enterprise-style pipeline).
+	// UploadWorkers caps parallel chunks per web upload.
 	UploadWorkers int
 	Backup        *backup.Service
 	DBBackup      *dbbackup.Service
 	DBImport      domain.DatabaseImporter
 	BackupSecret  string
+	s3Uploads     s3UploadLimiter
 
 	fetchOnce sync.Once
 	fetchJobs *fetchHub
@@ -325,8 +326,11 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 	if workers <= 0 {
 		workers = 3
 	}
+	if !dedup {
+		workers = 1
+	}
 
-	finalParts, finalTotal, streamedHash, err := s.uploadParts(ctx, channelID, node.ID, reader, chunkSize, workers, contentHash == "")
+	finalParts, finalTotal, streamedHash, err := s.uploadParts(ctx, channelID, node.ID, reader, chunkSize, workers, contentHash == "", !dedup)
 	if err != nil {
 		return domain.Node{}, err
 	}
@@ -367,7 +371,7 @@ func (s *Services) upload(ctx context.Context, parentID, filename string, mimeTy
 // reads when hash is true. It rolls back anything it uploaded on failure and
 // returns parts sorted by part number. Streaming means the total size is
 // unconstrained — only the reader length limits it.
-func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID string, r io.Reader, chunkSize, workers int, hash bool) ([]domain.FilePart, int64, string, error) {
+func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID string, r io.Reader, chunkSize, workers int, hash, s3 bool) ([]domain.FilePart, int64, string, error) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(workers)
 	sem := make(chan struct{}, workers)
@@ -381,6 +385,20 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 	)
 
 	for {
+		select {
+		case <-gctx.Done():
+			return nil, 0, "", errors.Join(g.Wait(), gctx.Err(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
+		case sem <- struct{}{}:
+		}
+		release := func() {}
+		if s3 {
+			var err error
+			release, err = s.s3Uploads.acquire(gctx)
+			if err != nil {
+				<-sem
+				return nil, 0, "", errors.Join(err, g.Wait(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
+			}
+		}
 		// Read only what exists. Preallocating CHUNK_SIZE here is what made a
 		// 500 KiB object reserve hundreds of MiB under the old 200 MiB default.
 		chunk, readErr := io.ReadAll(io.LimitReader(r, int64(chunkSize)))
@@ -394,15 +412,16 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 			total += int64(len(chunk))
 			mu.Unlock()
 
-			select {
-			case <-gctx.Done():
-				return nil, 0, "", errors.Join(g.Wait(), gctx.Err(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))
-			case sem <- struct{}{}:
-			}
-
 			g.Go(func() error {
 				defer func() { <-sem }()
-				msgID, upErr := s.Blobs.UploadPart(gctx, channelID, pn, nodeID, bytes.NewReader(chunk), int64(len(chunk)))
+				defer release()
+				var msgID int
+				var upErr error
+				if s3 {
+					msgID, upErr = s.uploadS3Part(gctx, channelID, pn, nodeID, chunk)
+				} else {
+					msgID, upErr = s.Blobs.UploadPart(gctx, channelID, pn, nodeID, bytes.NewReader(chunk), int64(len(chunk)))
+				}
 				if upErr != nil {
 					return upErr
 				}
@@ -418,6 +437,9 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 				mu.Unlock()
 				return nil
 			})
+		} else {
+			release()
+			<-sem
 		}
 		if readErr != nil {
 			return nil, 0, "", errors.Join(readErr, g.Wait(), s.rollbackUpload(ctx, nodeID, snapshotParts(&mu, &parts)))

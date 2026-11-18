@@ -2,12 +2,16 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/vrc/nimbus/internal/domain"
 )
 
 func TestBotAPIUploadDocumentKeepsBackupNameAndCaption(t *testing.T) {
@@ -61,6 +65,39 @@ func TestBotAPIUploadDocumentKeepsBackupNameAndCaption(t *testing.T) {
 	}
 	if content != "sqlite" {
 		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestBotAPIUploadPartPreservesRateLimitAndErrorDetails(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		wait   time.Duration
+	}{
+		{429, `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":7}}`, 7 * time.Second},
+		{403, `{"ok":false,"error_code":403,"description":"Forbidden"}`, 0},
+	} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			client := NewBotAPI(srv.URL, "token", "123")
+			_, err := client.UploadPart(context.Background(), 0, 0, "backup", strings.NewReader("data"), 4)
+			var limited *domain.RateLimitError
+			isLimited := errors.As(err, &limited)
+			if err == nil || isLimited != (tc.wait > 0) {
+				t.Fatalf("error classification: %v", err)
+			}
+			if isLimited && limited.RetryAfter != tc.wait {
+				t.Fatalf("retry_after=%v, want %v", limited.RetryAfter, tc.wait)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprint(tc.status)) {
+				t.Fatalf("missing provider details: %v", err)
+			}
+		})
 	}
 }
 

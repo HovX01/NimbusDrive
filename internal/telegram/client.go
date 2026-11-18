@@ -483,7 +483,7 @@ func (c *Client) UploadPart(ctx context.Context, channelID int64, partNo int, na
 	up := uploader.NewUploader(api).WithPartSize(uploader.MaximumPartSize)
 	file, err := up.Upload(ctx, uploader.NewUpload(filename, r, size))
 	if err != nil {
-		return 0, err
+		return 0, uploadRateLimit(err)
 	}
 	updates, err := api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: ch.ChannelID, AccessHash: ch.AccessHash},
@@ -498,7 +498,7 @@ func (c *Client) UploadPart(ctx context.Context, channelID int64, partNo int, na
 		RandomID: newRandomID(),
 	})
 	if err != nil {
-		return 0, err
+		return 0, uploadRateLimit(err)
 	}
 	return messageIDFromUpdates(updates)
 }
