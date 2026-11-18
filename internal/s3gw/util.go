@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 
+	"github.com/vrc/nimbus/internal/app"
 	"github.com/vrc/nimbus/internal/domain"
 )
 
@@ -48,6 +50,10 @@ func writeObjectError(w http.ResponseWriter, r *http.Request, err error) {
 
 func errorStatus(err error) int {
 	switch {
+	case errors.Is(err, app.ErrUploadSpace), errors.Is(err, syscall.ENOSPC):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, errUploadBusy):
+		return http.StatusConflict
 	case errors.Is(err, errUnknownUpload):
 		return http.StatusNotFound
 	case errors.Is(err, errInvalidPart), errors.Is(err, errInvalidPartOrder), errors.Is(err, errEntityTooSmall), errors.Is(err, errMalformedXML), errors.Is(err, domain.ErrValidation):
@@ -62,6 +68,10 @@ func errorStatus(err error) int {
 
 func errorCode(err error) string {
 	switch {
+	case errors.Is(err, app.ErrUploadSpace), errors.Is(err, syscall.ENOSPC):
+		return "SlowDown"
+	case errors.Is(err, errUploadBusy):
+		return "OperationAborted"
 	case errors.Is(err, errUnknownUpload):
 		return codeNoSuchUpload
 	case errors.Is(err, errInvalidPart):

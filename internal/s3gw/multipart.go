@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vrc/nimbus/internal/app"
 )
 
 var (
@@ -21,6 +22,7 @@ var (
 	errMalformedXML     = errors.New("malformed xml")
 	errInvalidPartOrder = errors.New("invalid part order")
 	errEntityTooSmall   = errors.New("part too small")
+	errUploadBusy       = errors.New("multipart upload is completing")
 )
 
 // partBuffer is one uploaded part staged on local disk until CompleteMultipartUpload.
@@ -39,6 +41,8 @@ type multipartUpload struct {
 	Dir         string
 	mu          sync.Mutex
 	parts       map[int]*partBuffer
+	completing  bool
+	closed      bool
 }
 
 type multipartTracker struct {
@@ -65,7 +69,12 @@ func (t *multipartTracker) cleanStale() {
 	}
 	for _, e := range entries {
 		if e.IsDir() {
-			_ = os.RemoveAll(filepath.Join(t.stagingDir(), e.Name()))
+			t.mu.Lock()
+			_, active := t.uploads[e.Name()]
+			t.mu.Unlock()
+			if !active {
+				_ = os.RemoveAll(filepath.Join(t.stagingDir(), e.Name()))
+			}
 		}
 	}
 }
@@ -101,17 +110,17 @@ func (t *multipartTracker) create(bucket, key, contentType string) (string, erro
 		Dir:         filepath.Join(t.stagingDir(), uploadID),
 		parts:       map[int]*partBuffer{},
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if err := os.MkdirAll(up.Dir, 0o700); err != nil {
 		return "", err
 	}
-	t.mu.Lock()
 	t.uploads[uploadID] = up
-	t.mu.Unlock()
 	return uploadID, nil
 }
 
 // putPart streams one part to disk, returning its MD5 (the S3 part ETag).
-func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (string, error) {
+func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader, size int64) (string, error) {
 	if partNo < 1 || partNo > 10000 {
 		return "", fmt.Errorf("%w: part number must be 1..10000", errInvalidPart)
 	}
@@ -119,6 +128,11 @@ func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (st
 	if err != nil {
 		return "", err
 	}
+	limit, release, err := app.ReserveUpload(up.Dir, size)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	f, err := os.CreateTemp(up.Dir, "part-*")
 	if err != nil {
 		return "", err
@@ -126,9 +140,16 @@ func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (st
 	defer f.Close()
 	defer os.Remove(f.Name())
 	h := md5.New()
-	n, err := io.Copy(io.MultiWriter(f, h), r)
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(r, limit))
 	if err != nil {
 		return "", err
+	}
+	if n == limit {
+		if extra, err := io.CopyN(io.Discard, r, 1); extra != 0 {
+			return "", app.ErrUploadSpace
+		} else if err != io.EOF {
+			return "", err
+		}
 	}
 	if err := f.Close(); err != nil {
 		return "", err
@@ -136,6 +157,12 @@ func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (st
 	md5Hex := hex.EncodeToString(h.Sum(nil))
 	up.mu.Lock()
 	defer up.mu.Unlock()
+	if up.closed {
+		return "", errUnknownUpload
+	}
+	if up.completing {
+		return "", errUploadBusy
+	}
 	path := filepath.Join(up.Dir, fmt.Sprintf("part-%05d", partNo))
 	if err := os.Rename(f.Name(), path); err != nil {
 		return "", err
@@ -146,7 +173,7 @@ func (t *multipartTracker) putPart(uploadID string, partNo int, r io.Reader) (st
 
 // assemble validates the requested parts and returns a reader over their
 // concatenation plus a cleanup function.
-func (t *multipartTracker) assemble(uploadID string, requested []completePartRequest) (io.Reader, func(), error) {
+func (t *multipartTracker) assemble(uploadID string, requested []completePartRequest) (io.Reader, func(bool), error) {
 	up, err := t.get(uploadID)
 	if err != nil {
 		return nil, nil, err
@@ -156,7 +183,13 @@ func (t *multipartTracker) assemble(uploadID string, requested []completePartReq
 	}
 	up.mu.Lock()
 	defer up.mu.Unlock()
-	ordered := make([]int, 0, len(requested))
+	if up.closed {
+		return nil, nil, errUnknownUpload
+	}
+	if up.completing {
+		return nil, nil, errUploadBusy
+	}
+	reader := &multipartReader{paths: make([]string, 0, len(requested))}
 	previous := 0
 	for i, p := range requested {
 		if p.PartNumber <= previous {
@@ -173,37 +206,72 @@ func (t *multipartTracker) assemble(uploadID string, requested []completePartReq
 		if i < len(requested)-1 && buf.Size < 5<<20 {
 			return nil, nil, errEntityTooSmall
 		}
-		ordered = append(ordered, p.PartNumber)
+		reader.paths = append(reader.paths, buf.Path)
 	}
-	readers := make([]io.Reader, 0, len(ordered))
-	files := make([]*os.File, 0, len(ordered))
-	for _, no := range ordered {
-		f, err := os.Open(up.parts[no].Path)
-		if err != nil {
-			for _, opened := range files {
-				_ = opened.Close()
-			}
-			return nil, nil, err
+	up.completing = true
+	return reader, func(success bool) {
+		if reader.file != nil {
+			_ = reader.file.Close()
 		}
-		files = append(files, f)
-		readers = append(readers, f)
-	}
-	cleanup := func() {
-		for _, f := range files {
-			_ = f.Close()
+		up.mu.Lock()
+		defer up.mu.Unlock()
+		up.completing = false
+		if success {
+			t.remove(uploadID, up)
 		}
-	}
-	return io.MultiReader(readers...), cleanup, nil
+	}, nil
 }
 
-func (t *multipartTracker) abort(uploadID string) {
+type multipartReader struct {
+	paths []string
+	file  *os.File
+}
+
+func (r *multipartReader) Read(p []byte) (int, error) {
+	for {
+		if r.file == nil {
+			if len(r.paths) == 0 {
+				return 0, io.EOF
+			}
+			f, err := os.Open(r.paths[0])
+			if err != nil {
+				return 0, err
+			}
+			r.file, r.paths = f, r.paths[1:]
+		}
+		n, err := r.file.Read(p)
+		if err != io.EOF {
+			return n, err
+		}
+		_ = r.file.Close()
+		r.file = nil
+		if n != 0 {
+			return n, nil
+		}
+	}
+}
+
+func (t *multipartTracker) abort(uploadID string) error {
+	up, err := t.get(uploadID)
+	if err != nil {
+		return err
+	}
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	if up.closed {
+		return errUnknownUpload
+	}
+	if up.completing {
+		return errUploadBusy
+	}
+	t.remove(uploadID, up)
+	return nil
+}
+
+func (t *multipartTracker) remove(uploadID string, up *multipartUpload) {
+	up.closed = true
 	t.mu.Lock()
-	up, ok := t.uploads[uploadID]
-	if ok {
-		delete(t.uploads, uploadID)
-	}
+	delete(t.uploads, uploadID)
 	t.mu.Unlock()
-	if up != nil {
-		_ = os.RemoveAll(up.Dir)
-	}
+	_ = os.RemoveAll(up.Dir)
 }

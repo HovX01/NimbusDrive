@@ -100,8 +100,14 @@ func (s *Server) ensureFolderPath(ctx context.Context, startID, path string) (do
 			node = child
 		case errors.Is(err, domain.ErrNotFound):
 			child, err = s.svc.Mkdir(ctx, node.ID, seg)
+			if errors.Is(err, domain.ErrConflict) {
+				child, err = s.svc.Nodes.FindChildByName(ctx, node.ID, seg)
+			}
 			if err != nil {
 				return domain.Node{}, err
+			}
+			if child.Type != domain.NodeFolder {
+				return domain.Node{}, domain.ErrConflict
 			}
 			node = child
 		default:

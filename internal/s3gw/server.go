@@ -34,7 +34,7 @@ type Server struct {
 
 func New(svc *app.Services, cfg Config, dataDir string) *Server {
 	t := newMultipartTracker(dataDir)
-	t.cleanStale()
+	go t.cleanStale()
 	return &Server{svc: svc, cfg: cfg, dataDir: dataDir, multipart: t, namespace: &sync.RWMutex{}}
 }
 
@@ -462,7 +462,10 @@ func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request, bucket, ke
 			writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
 			return
 		}
-		s.multipart.abort(uploadID)
+		if err := s.multipart.abort(uploadID); err != nil {
+			writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -483,7 +486,7 @@ func (s *Server) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key,
 		writeS3Error(w, r, http.StatusBadRequest, codeInvalidPart, "part number must be 1..10000")
 		return
 	}
-	md5Hex, err := s.multipart.putPart(uploadID, partNo, chunkedBody(r))
+	md5Hex, err := s.multipart.putPart(uploadID, partNo, chunkedBody(r), r.ContentLength)
 	if err != nil {
 		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
 		return
@@ -503,12 +506,13 @@ func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucke
 		writeS3Error(w, r, http.StatusBadRequest, codeMalformedXML, err.Error())
 		return
 	}
-	reader, cleanup, err := s.multipart.assemble(uploadID, req.Parts)
+	reader, finish, err := s.multipart.assemble(uploadID, req.Parts)
 	if err != nil {
 		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
 		return
 	}
-	defer cleanup()
+	completed := false
+	defer func() { finish(completed) }()
 	// Prefer the content type from the initiate request; the complete request's
 	// own Content-Type describes its XML body, not the object.
 	contentType := "application/octet-stream"
@@ -520,7 +524,7 @@ func (s *Server) completeMultipart(w http.ResponseWriter, r *http.Request, bucke
 		writeS3Error(w, r, errorStatus(err), errorCode(err), err.Error())
 		return
 	}
-	s.multipart.abort(uploadID)
+	completed = true
 	writeXML(w, http.StatusOK, completeMultipartResult{
 		Location: "/" + bucket + "/" + key,
 		Bucket:   bucket,

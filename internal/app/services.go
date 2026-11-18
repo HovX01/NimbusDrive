@@ -401,7 +401,14 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 		}
 		// Read only what exists. Preallocating CHUNK_SIZE here is what made a
 		// 500 KiB object reserve hundreds of MiB under the old 200 MiB default.
-		chunk, readErr := io.ReadAll(io.LimitReader(r, int64(chunkSize)))
+		var chunk []byte
+		var recycle func()
+		var readErr error
+		if s3 {
+			chunk, recycle, readErr = s.s3Uploads.readChunk(r, chunkSize)
+		} else {
+			chunk, readErr = io.ReadAll(io.LimitReader(r, int64(chunkSize)))
+		}
 		if len(chunk) > 0 {
 			if hash {
 				hasher.Write(chunk)
@@ -415,6 +422,9 @@ func (s *Services) uploadParts(ctx context.Context, channelID int64, nodeID stri
 			g.Go(func() error {
 				defer func() { <-sem }()
 				defer release()
+				if recycle != nil {
+					defer recycle()
+				}
 				var msgID int
 				var upErr error
 				if s3 {

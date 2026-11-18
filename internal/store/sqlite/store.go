@@ -91,6 +91,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
   id UNINDEXED,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+CREATE TABLE IF NOT EXISTS nodes_fts_rows (
+  rowid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE
+);
 CREATE TABLE IF NOT EXISTS nodes_fts_dirty (id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS nodes_fts_backfill (id TEXT PRIMARY KEY);
 CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes
@@ -98,13 +102,21 @@ WHEN new.id != 'root' AND new.status = 'ready'
 BEGIN
   INSERT OR IGNORE INTO nodes_fts_dirty(id) VALUES (new.id);
 END;
-CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE OF name, parent_id, status ON nodes
+DROP TRIGGER IF EXISTS nodes_fts_update;
+CREATE TRIGGER IF NOT EXISTS nodes_fts_track_update AFTER UPDATE OF name, parent_id, status ON nodes
 BEGIN
   INSERT OR IGNORE INTO nodes_fts_dirty(id)
     SELECT new.id WHERE old.status = 'ready' OR new.status = 'ready';
   INSERT OR IGNORE INTO nodes_fts_dirty(id)
-    SELECT 'root' WHERE new.type = 'folder'
-      AND (new.name != old.name OR new.parent_id IS NOT old.parent_id);
+    SELECT id FROM (
+      WITH RECURSIVE subtree(id) AS (
+        SELECT new.id WHERE new.type = 'folder'
+          AND (new.name != old.name OR new.parent_id IS NOT old.parent_id)
+        UNION
+        SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.id WHERE n.status != 'deleted'
+      )
+      SELECT id FROM subtree WHERE id != new.id
+    );
 END;
 CREATE TRIGGER IF NOT EXISTS nodes_fts_delete AFTER DELETE ON nodes
 BEGIN
@@ -145,59 +157,6 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 CREATE INDEX IF NOT EXISTS idx_file_hashes_node ON file_hashes(node_id);
 `)
 	return err
-}
-
-func (s *Store) rebuildFTS(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var ready bool
-	if err := tx.QueryRowContext(ctx, searchIndexReady).Scan(&ready); err != nil || !ready {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts`); err != nil {
-		return err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM nodes WHERE status = 'ready' AND id != 'root'`)
-	if err != nil {
-		return err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO nodes_fts(name, path, id) VALUES (?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for _, id := range ids {
-		crumbs, path, err := pathForNode(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if _, err := stmt.ExecContext(ctx, crumbs[len(crumbs)-1].Name, path, id); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts_dirty;
-INSERT OR REPLACE INTO nodes_fts_state(id, version) VALUES (1, 1)`); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 
 type nodeQuerier interface {
@@ -250,7 +209,7 @@ func (s *Store) upsertFTS(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts WHERE id = ?`, id); err != nil {
+	if err := deleteFTS(ctx, tx, id); err != nil {
 		return err
 	}
 	if n.Status == domain.StatusReady {
@@ -278,7 +237,7 @@ func (s *Store) removeFTS(ctx context.Context, id string) error {
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE id = ? AND status = 'ready')`, id).Scan(&ready); err != nil || ready {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts WHERE id = ?`, id); err != nil {
+	if err := deleteFTS(ctx, tx, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts_dirty WHERE id = ?`, id); err != nil {
@@ -428,9 +387,10 @@ FROM nodes WHERE id = ? AND status = 'deleted'`, id)
 }
 
 func (s *Store) ListChildren(ctx context.Context, parentID string) ([]domain.Node, error) {
+	// Repeat the partial index predicate so SQLite can use idx_nodes_parent.
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, parent_id, name, type, mime_type, size, status, channel_id, deleted_at, created_at, updated_at
-FROM nodes WHERE parent_id = ? AND status = 'ready' ORDER BY type DESC, name COLLATE NOCASE`, parentID)
+FROM nodes WHERE parent_id = ? AND status = 'ready' AND status != 'deleted' ORDER BY type DESC, name COLLATE NOCASE`, parentID)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +544,7 @@ UPDATE nodes SET name = ?, updated_at = ? WHERE id = ? AND status != 'deleted'`,
 		return nil
 	}
 	if node.Type == domain.NodeFolder {
-		_ = s.rebuildFTS(ctx)
+		_ = s.reindexTree(ctx, id)
 	} else {
 		_ = s.upsertFTS(ctx, id)
 	}
@@ -649,7 +609,7 @@ UPDATE nodes SET parent_id = ?, updated_at = ? WHERE id = ? AND status != 'delet
 		return domain.ErrNotFound
 	}
 	if node.Type == domain.NodeFolder {
-		return s.rebuildFTS(ctx)
+		return s.reindexTree(ctx, id)
 	}
 	return s.upsertFTS(ctx, id)
 }

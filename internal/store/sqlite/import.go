@@ -200,7 +200,7 @@ ON CONFLICT(hash) DO UPDATE SET node_id = excluded.node_id`, hash, newID)
 	if err := tx.Commit(); err != nil {
 		return summary, err
 	}
-	if err := s.rebuildFTS(ctx); err != nil {
+	if err := s.PrepareSearch(ctx); err != nil {
 		addImportWarning(&summary, "search index rebuild failed: %v", err)
 	}
 	return summary, nil

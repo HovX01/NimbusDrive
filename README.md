@@ -89,6 +89,8 @@ S3 backups share two chunk-upload slots per Nimbus process, with one chunk per f
 
 For 50 MiB chunks, set `CHUNK_SIZE=52428800` and `UPLOAD_WORKERS=3` in the Nimbus Coolify service. If `TELEGRAM_BOT_CHUNK_SIZE` is set for the Bot API backend, set it to `52428800` too, since it overrides `CHUNK_SIZE`. Redeploy Nimbus to apply environment changes.
 
+A 2 GiB object uses 41 Telegram chunks at this setting. Multipart backup parts are staged on disk until completion; keep enough free space for the backups arriving together. Nimbus returns S3 `SlowDown` when it cannot reserve staging space.
+
 Run `go test ./internal/s3gw ./internal/app ./internal/store/sqlite` for gateway/storage checks. Set `NIMBUS_TEST_RUSTIC` to a Rustic executable to include local backup, S3 replication, byte-for-byte restore, integrity checks, and pruning.
 
 ### Database backup to Telegram

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
@@ -12,10 +13,11 @@ import (
 
 // shortcut: limits are per Nimbus process; share a limiter if replicas use the same Telegram account.
 type s3UploadLimiter struct {
-	once  sync.Once
-	slots chan struct{}
-	mu    sync.Mutex
-	next  time.Time
+	once    sync.Once
+	slots   chan struct{}
+	buffers sync.Pool
+	mu      sync.Mutex
+	next    time.Time
 }
 
 func (l *s3UploadLimiter) acquire(ctx context.Context) (func(), error) {
@@ -29,6 +31,32 @@ func (l *s3UploadLimiter) acquire(ctx context.Context) (func(), error) {
 	case l.slots <- struct{}{}:
 		return func() { <-l.slots }, nil
 	}
+}
+
+func (l *s3UploadLimiter) readChunk(r io.Reader, chunkSize int) ([]byte, func(), error) {
+	const smallChunk = 256 << 10
+	chunk, err := io.ReadAll(io.LimitReader(r, int64(min(chunkSize, smallChunk))))
+	if err != nil || len(chunk) < smallChunk || len(chunk) == chunkSize {
+		return chunk, nil, err
+	}
+	buf, _ := l.buffers.Get().(*[]byte)
+	if buf == nil || cap(*buf) != chunkSize {
+		b := make([]byte, chunkSize)
+		buf = &b
+	}
+	n := copy(*buf, chunk)
+	for n < chunkSize {
+		var read int
+		read, err = r.Read((*buf)[n:])
+		n += read
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			break
+		}
+	}
+	return (*buf)[:n], func() { l.buffers.Put(buf) }, err
 }
 
 func (l *s3UploadLimiter) wait(ctx context.Context) error {
