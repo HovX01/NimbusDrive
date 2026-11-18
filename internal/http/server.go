@@ -936,6 +936,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		status, code = http.StatusPreconditionRequired, "not_configured"
 	case errors.Is(err, domain.ErrProviderConfig):
 		status, code = http.StatusPreconditionRequired, "provider_not_configured"
+	case errors.Is(err, domain.ErrSearchPreparing):
+		status, code = http.StatusServiceUnavailable, "search_preparing"
 	case errors.Is(err, domain.ErrUnauthorized), errors.Is(err, domain.ErrNotAuthenticated):
 		status, code = http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, domain.ErrNotFound):

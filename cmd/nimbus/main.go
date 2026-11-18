@@ -37,11 +37,13 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	dbStart := time.Now()
 	store, err := sqlite.Open(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
 	defer store.Close()
+	log.Printf("database ready in %s", time.Since(dbStart).Round(time.Millisecond))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -145,6 +147,11 @@ func main() {
 		log.Printf("nimbus listening on http://localhost:%s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
+		}
+	}()
+	go func() {
+		if err := store.PrepareSearch(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("search index: %v", err)
 		}
 	}()
 

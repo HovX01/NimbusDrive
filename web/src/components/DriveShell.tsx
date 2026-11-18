@@ -160,6 +160,8 @@ export function DriveShell(props: Props) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [preview, setPreview] = useState<Node | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [fetchOpen, setFetchOpen] = useState(false);
@@ -251,20 +253,25 @@ export function DriveShell(props: Props) {
 
   useEffect(() => {
     const q = query.trim();
+    setSearchError("");
     if (q.length < 2) {
       setHits(null);
       setSearching(false);
       return;
     }
     let cancelled = false;
+    setHits(null);
     setSearching(true);
     const t = window.setTimeout(() => {
       searchFiles(token, q)
         .then((r) => {
           if (!cancelled) setHits(r.items ?? []);
         })
-        .catch(() => {
-          if (!cancelled) setHits([]);
+        .catch((err) => {
+          if (!cancelled) {
+            setHits([]);
+            setSearchError(err instanceof Error ? err.message : "Search failed. Try again.");
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -274,7 +281,7 @@ export function DriveShell(props: Props) {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [query, token]);
+  }, [query, token, searchAttempt]);
 
   useEffect(() => {
     function onEnter(e: DragEvent) {
@@ -425,7 +432,7 @@ export function DriveShell(props: Props) {
       : selectionMode
         ? `${selectedCount} selected`
         : searchingMode
-          ? `${displayed.length} result${displayed.length === 1 ? "" : "s"}`
+          ? searchError ? "" : `${displayed.length} result${displayed.length === 1 ? "" : "s"}`
           : `${displayed.length} item${displayed.length === 1 ? "" : "s"}`;
 
   function goDrive() {
@@ -792,15 +799,20 @@ export function DriveShell(props: Props) {
                   {searchingMode ? <SearchX className="h-5 w-5" /> : <FolderOpen className="h-5 w-5" />}
                 </span>
                 <h2 className="text-lg font-semibold tracking-tight">
-                  {trashMode ? "Trash is empty" : searchingMode ? "No results" : "This folder is empty"}
+                  {trashMode ? "Trash is empty" : searchingMode ? (searchError ? "Search unavailable" : "No results") : "This folder is empty"}
                 </h2>
                 <p className="text-sm text-muted-foreground">
                   {trashMode
                     ? "Deleted files and folders will rest here. Cozy, right?"
                     : searchingMode
-                    ? `Nothing matched “${query.trim()}”. Try another word?`
+                    ? searchError || `Nothing matched “${query.trim()}”. Try another word?`
                     : "Upload files or create a folder to get started — you’ve got this!"}
                 </p>
+                {searchingMode && !trashMode && searchError && (
+                  <Button variant="outline" className="w-fit" onClick={() => setSearchAttempt((n) => n + 1)}>
+                    Try again
+                  </Button>
+                )}
                 {!searchingMode && !trashMode && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button onClick={() => fileInput.current?.click()}>

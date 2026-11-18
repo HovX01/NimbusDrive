@@ -14,6 +14,7 @@ var (
 	ErrTwoFARequired    = errors.New("two-factor password required")
 	ErrNotConfigured    = errors.New("telegram api credentials not configured")
 	ErrProviderConfig   = errors.New("provider credentials not configured")
+	ErrSearchPreparing  = errors.New("Search is preparing. Try again in a moment.")
 )
 
 type NodeType string

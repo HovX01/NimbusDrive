@@ -79,12 +79,37 @@ CREATE TABLE IF NOT EXISTS file_parts (
 );
 CREATE INDEX IF NOT EXISTS idx_parts_file ON file_parts(file_id);
 
+CREATE TABLE IF NOT EXISTS nodes_fts_state (
+  id INTEGER PRIMARY KEY CHECK(id = 1),
+  version INTEGER NOT NULL
+);
+DELETE FROM nodes_fts_state
+WHERE NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'nodes_fts');
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
   name,
   path,
   id UNINDEXED,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+CREATE TABLE IF NOT EXISTS nodes_fts_dirty (id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS nodes_fts_backfill (id TEXT PRIMARY KEY);
+CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes
+WHEN new.id != 'root' AND new.status = 'ready'
+BEGIN
+  INSERT OR IGNORE INTO nodes_fts_dirty(id) VALUES (new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE OF name, parent_id, status ON nodes
+BEGIN
+  INSERT OR IGNORE INTO nodes_fts_dirty(id)
+    SELECT new.id WHERE old.status = 'ready' OR new.status = 'ready';
+  INSERT OR IGNORE INTO nodes_fts_dirty(id)
+    SELECT 'root' WHERE new.type = 'folder'
+      AND (new.name != old.name OR new.parent_id IS NOT old.parent_id);
+END;
+CREATE TRIGGER IF NOT EXISTS nodes_fts_delete AFTER DELETE ON nodes
+BEGIN
+  INSERT OR IGNORE INTO nodes_fts_dirty(id) VALUES (old.id);
+END;
 `)
 	if err != nil {
 		return err
@@ -107,7 +132,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
 	if err := s.migrateSocial(); err != nil {
 		return err
 	}
-	return s.rebuildFTS(context.Background())
+	return nil
 }
 
 func (s *Store) migrateColumns() error {
@@ -123,11 +148,19 @@ CREATE INDEX IF NOT EXISTS idx_file_hashes_node ON file_hashes(node_id);
 }
 
 func (s *Store) rebuildFTS(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM nodes_fts`); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	rows, err := s.db.QueryContext(ctx, `
-SELECT id FROM nodes WHERE status = 'ready' AND id != 'root'`)
+	defer tx.Rollback()
+	var ready bool
+	if err := tx.QueryRowContext(ctx, searchIndexReady).Scan(&ready); err != nil || !ready {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts`); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM nodes WHERE status = 'ready' AND id != 'root'`)
 	if err != nil {
 		return err
 	}
@@ -146,19 +179,36 @@ SELECT id FROM nodes WHERE status = 'ready' AND id != 'root'`)
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO nodes_fts(name, path, id) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
 	for _, id := range ids {
-		if err := s.upsertFTS(ctx, id); err != nil {
+		crumbs, path, err := pathForNode(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if _, err := stmt.ExecContext(ctx, crumbs[len(crumbs)-1].Name, path, id); err != nil {
 			return err
 		}
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts_dirty;
+INSERT OR REPLACE INTO nodes_fts_state(id, version) VALUES (1, 1)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) pathForNode(ctx context.Context, id string) (crumbs []domain.PathCrumb, pathText string, err error) {
+type nodeQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func pathForNode(ctx context.Context, db nodeQuerier, id string) (crumbs []domain.PathCrumb, pathText string, err error) {
 	var chain []domain.PathCrumb
 	cur := id
 	for i := 0; i < 64; i++ {
-		n, getErr := s.Get(ctx, cur)
+		n, getErr := getNode(ctx, db, cur)
 		if getErr != nil {
 			return nil, "", getErr
 		}
@@ -187,26 +237,54 @@ func (s *Store) upsertFTS(ctx context.Context, id string) error {
 	if id == "" || id == "root" {
 		return nil
 	}
-	n, err := s.Get(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if n.Status != domain.StatusReady {
-		return s.removeFTS(ctx, id)
+	defer tx.Rollback()
+	var ready bool
+	if err := tx.QueryRowContext(ctx, searchIndexReady).Scan(&ready); err != nil || !ready {
+		return err
 	}
-	_, pathText, err := s.pathForNode(ctx, id)
+	n, err := getNode(ctx, tx, id)
 	if err != nil {
 		return err
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM nodes_fts WHERE id = ?`, id)
-	_, err = s.db.ExecContext(ctx, `
-INSERT INTO nodes_fts(name, path, id) VALUES (?, ?, ?)`, n.Name, pathText, id)
-	return err
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts WHERE id = ?`, id); err != nil {
+		return err
+	}
+	if n.Status == domain.StatusReady {
+		if err := insertFTS(ctx, tx, n); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts_dirty WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) removeFTS(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM nodes_fts WHERE id = ?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var indexReady bool
+	if err := tx.QueryRowContext(ctx, searchIndexReady).Scan(&indexReady); err != nil || !indexReady {
+		return err
+	}
+	var ready bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE id = ? AND status = 'ready')`, id).Scan(&ready); err != nil || ready {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts WHERE id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes_fts_dirty WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // BuildFTSQuery turns user text into a safe FTS5 MATCH expression (prefix on last term).
@@ -247,7 +325,19 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]domain.S
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var ready bool
+	if err := tx.QueryRowContext(ctx, searchIndexReady).Scan(&ready); err != nil {
+		return nil, err
+	}
+	if !ready {
+		return nil, domain.ErrSearchPreparing
+	}
+	rows, err := tx.QueryContext(ctx, `
 SELECT n.id, n.parent_id, n.name, n.type, n.mime_type, n.size, n.status, n.channel_id, n.deleted_at, n.created_at, n.updated_at,
        bm25(nodes_fts) AS rank
 FROM nodes_fts
@@ -296,7 +386,7 @@ LIMIT ?`, q, limit)
 
 	hits := make([]domain.SearchHit, 0, len(pending))
 	for _, p := range pending {
-		path, _, err := s.pathForNode(ctx, p.node.ID)
+		path, _, err := pathForNode(ctx, tx, p.node.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -320,7 +410,11 @@ ON CONFLICT(id) DO NOTHING
 }
 
 func (s *Store) Get(ctx context.Context, id string) (domain.Node, error) {
-	row := s.db.QueryRowContext(ctx, `
+	return getNode(ctx, s.db, id)
+}
+
+func getNode(ctx context.Context, db nodeQuerier, id string) (domain.Node, error) {
+	row := db.QueryRowContext(ctx, `
 SELECT id, parent_id, name, type, mime_type, size, status, channel_id, deleted_at, created_at, updated_at
 FROM nodes WHERE id = ? AND status != 'deleted'`, id)
 	return scanNode(row)
@@ -411,7 +505,7 @@ UPDATE nodes SET status = ?, updated_at = ? WHERE id = ? AND status != 'deleted'
 		return domain.ErrNotFound
 	}
 	switch status {
-	case domain.StatusReady:
+	case domain.StatusReady, domain.StatusPending:
 		_ = s.upsertFTS(ctx, id)
 	case domain.StatusDeleted:
 		_ = s.removeFTS(ctx, id)

@@ -300,6 +300,8 @@ DELETE /api/v1/files/{id}
 GET /api/v1/search?q=photo
 ```
 
+Search can return `503` with error code `search_preparing` while the index is being built. Retry the search after a short delay. File browsing and uploads remain available.
+
 ### Fetch social/video URL (async)
 
 ```http
